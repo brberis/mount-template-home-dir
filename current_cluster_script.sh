@@ -4,7 +4,10 @@
 
 # Define the target template user where the template directory is located
 TARGET_USER=<user>
-PUBLIC_IP=<public ip>
+# App VM Public IP
+PUBLIC_IP="10.53.0.15"
+
+
 
 
 set -e  # Exit immediately if a command exits with a non-zero status
@@ -123,6 +126,137 @@ sudo apt-mark hold firefox
 echo_status "Firefox installation completed successfully."
 
 
+######### SINGULARITY #########
+# Install Singularity
+sudo apt-get update
+sudo apt-get update && sudo apt-get install -y \
+    build-essential \
+    libssl-dev \
+    uuid-dev \
+    libgpgme11-dev \
+    squashfs-tools \
+    libseccomp-dev \
+    pkg-config
+
+sudo apt-get install -y build-essential libssl-dev uuid-dev libgpgme11-dev \
+    squashfs-tools libseccomp-dev wget pkg-config git cryptsetup debootstrap
+wget https://dl.google.com/go/go1.13.linux-amd64.tar.gz
+sudo tar --directory=/usr/local -xzvf go1.13.linux-amd64.tar.gz
+export PATH=/usr/local/go/bin:$PATH
+
+wget https://github.com/singularityware/singularity/releases/download/v3.5.3/singularity-3.5.3.tar.gz
+tar -xzvf singularity-3.5.3.tar.gz
+cd singularity
+./mconfig
+cd builddir
+make
+sudo make install
+
+#If you want support for tab completion of Singularity commands, you need to source the appropriate file and add it to the bash completion directory in /etc so that it will be sourced automatically when you start another shell.
+. etc/bash_completion.d/singularity
+sudo cp etc/bash_completion.d/singularity /etc/bash_completion.d/
+
+#Mount E4S App VM (but only after /etc/exports" on the E4S App has been updated with the new head Node Public IP and NFS was started on the E4S App VM
+#Updating /etc/exports on E4S VM run "vi /etc/exports" and add line "/root <public ip>(rw,sync,no_root_squash)" and run "systemctl restart nfs.service"
+sudo mkdir /e4sonpremvm
+sudo mount "$PUBLIC_IP":/root /e4sonpremvm
+
+
+##### Mount Instructor Directories #####
+
+# mount  target user directory
+sudo chown -R $TARGET_USER:$TARGET_USER /e4sonpremvm/instructor_data/$TARGET_USER
+sudo ln -s /e4sonpremvm/instructor_data/$TARGET_USER/Documents /home/$TARGET_USER/
+sudo ln -s /e4sonpremvm/instructor_data/$TARGET_USER/LabTemplate /home/$TARGET_USER/
+sudo ln -s /e4sonpremvm/instructor_data/$TARGET_USER/Share /home/$TARGET_USER/
+sudo chmod -R 755 /e4sonpremvm/instructor_data/$TARGET_USER/LabTemplate
+sudo chmod -R 755 /e4sonpremvm/instructor_data/$TARGET_USER/Share
+
+
+##### CREATE JUPYTER LAB LAUNCHER #####
+
+USER_HOME="/home/$TARGET_USER"
+APP_NAME="jupyter_launcher"
+C_FILE="$USER_HOME/$APP_NAME.c"
+BIN_PATH="/usr/local/bin/$APP_NAME"
+DESKTOP_FILE="/usr/share/applications/jupyter-lab.desktop"
+ICON_DIR="/usr/share/pixmaps/"
+ICON_PATH="$ICON_DIR/jupyter.png"
+ICON_URL="https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/Jupyter_logo.svg/800px-Jupyter_logo.png"
+
+# Ensure the target user is set
+if [ -z "$TARGET_USER" ]; then
+    echo "Error: TARGET_USER environment variable is not set."
+    exit 1
+fi
+
+# Ensure GCC is installed
+if ! command -v gcc &> /dev/null; then
+    echo "Error: GCC is not installed. Installing..."
+    sudo apt update && sudo apt install -y gcc
+fi
+
+# Ensure Singularity is installed
+if ! command -v singularity &> /dev/null; then
+    echo "Error: Singularity is not installed. Please install it before running this script."
+    exit 1
+fi
+
+# Create the C program
+cat <<EOF > "$C_FILE"
+#include <stdlib.h>
+#include <unistd.h>
+
+int main() {
+    // Show a "Loading..." dialog with no OK button
+    system("zenity --progress --pulsate --text='🟢 Loading Jupyter Lab... Please wait.' --no-cancel --timeout=10 --width=500 &");
+
+    // Execute the Singularity command with correct user home
+    return system("singularity exec --nv /e4sonpremvm/E4S/24.02/e4s-cuda80-x86_64-24.11.sif bash -c \"cd && jupyter-lab\"");
+}
+EOF
+
+# Compile the C program
+gcc -o "$BIN_PATH" "$C_FILE"
+
+# Ensure the binary is executable
+chmod +x "$BIN_PATH"
+sudo chown root:root "$BIN_PATH"  # Root should own global binaries
+
+# Create icons directory if it doesn't exist
+sudo mkdir -p "$ICON_DIR"
+
+# Download Jupyter icon if it doesn't exist
+if [ ! -f "$ICON_PATH" ]; then
+    echo "Downloading Jupyter icon..."
+    sudo wget -q --show-progress -O "$ICON_PATH" "$ICON_URL"
+fi
+
+# Ensure correct ownership of icon
+sudo chmod 644 "$ICON_PATH"
+
+# Create a .desktop file for Ubuntu UI
+sudo tee "$DESKTOP_FILE" > /dev/null <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Jupyter Lab
+Comment=Launch Jupyter Lab in Singularity
+Exec=env DISPLAY=:0 $BIN_PATH
+Icon=$ICON_PATH
+Terminal=false
+Categories=Development;Science;
+EOF
+
+# Ensure the desktop file has correct permissions
+sudo chmod 644 "$DESKTOP_FILE"
+
+# Refresh Ubuntu’s application database
+sudo update-desktop-database "/usr/share/applications"
+
+echo "✅ Jupyter Lab launcher created successfully for all users."
+
+
 
 
 ##### MOUNTING OR COPYING TEMPLATE DIRECTORY ######
@@ -140,14 +274,16 @@ sudo tee /usr/local/bin/user_mount_service.sh > /dev/null << 'EOF'
 #!/bin/bash
 # user_mount_service.sh (Polling Version using fast copy)
 # This version polls for new users and copies the template directory
-# to the new userâ��s home. It uses tar to copy files and then fixes ownership.
-#
+# to the /home/<user>/Lab/ directory.
+
 # Configuration
-TEMPLATE_DIR="/home/$TARGET_USER"         # Directory to copy to each new user's home
-IGNORE_USERS=("root" "ubuntu" "oddcadmin2")    # Users to ignore (adjust as needed)
-RETRIES=10                        # Number of times to check for a new user's home directory
-WAIT_TIME=2                       # Seconds to wait between checks for home directory appearance
-POLL_INTERVAL=10                  # Seconds between polls for new users
+TARGET_USER=$TARGET_USER 
+TEMPLATE_DIR="/e4sonpremvm/instructor_data/$TARGET_USER/LabTemplate"  # Source template directory
+SHARE_DIR="/e4sonpremvm/instructor_data/$TARGET_USER/Share"  # Shared directory (read-execute only)
+IGNORE_USERS=("root" "ubuntu" "oddcadmin2")  # Users to ignore
+RETRIES=10
+WAIT_TIME=2
+POLL_INTERVAL=10
 
 # Helper Functions
 is_ignored_user() {
@@ -162,38 +298,37 @@ is_ignored_user() {
 
 copy_template() {
     local user="$1"
-    local home_dir="$2"
-    local retries=$RETRIES
+    local lab_dir="/home/$user/Lab"
 
-    while [ $retries -gt 0 ]; do
-        if [ -d "$home_dir" ]; then
-            break
-        else
-            echo "[$(date)] Home directory '$home_dir' not found for user '$user'. Retrying in ${WAIT_TIME}s... ($retries left)"
-            sleep $WAIT_TIME
-            retries=$((retries - 1))
-        fi
-    done
+    mkdir -p "$lab_dir"
 
-    if [ ! -d "$home_dir" ]; then
-        echo "[$(date)] ERROR: Home directory '$home_dir' still does not exist for user '$user' after retries. Skipping copy."
-        return 1
-    fi
-
-    # Use tar to copy and force all files to be owned by $user.
-    if tar cf - -C "$TEMPLATE_DIR" . | tar xf - --no-same-owner --no-same-permissions -C "$home_dir"; then
-        chown -R "$user:$user" "$home_dir"
-        echo "[$(date)] Successfully copied '$TEMPLATE_DIR' to '$home_dir' for user '$user'."
+    if tar cf - -C "$TEMPLATE_DIR" . | tar xf - --no-same-owner --no-same-permissions -C "$lab_dir"; then
+        chown -R "$user:$user" "$lab_dir"
+        echo "[$(date)] Successfully copied '$TEMPLATE_DIR' to '$lab_dir' for user '$user'."
         return 0
     else
-        echo "[$(date)] ERROR: Failed to copy '$TEMPLATE_DIR' to '$home_dir' for user '$user'."
+        echo "[$(date)] ERROR: Failed to copy '$TEMPLATE_DIR' to '$lab_dir' for user '$user'."
         return 1
+    fi
+}
+
+create_share_symlink() {
+    local user="$1"
+    local home_dir="/home/$user"
+    local share_link="$home_dir/Share"
+
+    if [ ! -L "$share_link" ]; then
+        ln -s "$SHARE_DIR" "$share_link"
+        echo "[$(date)] Created symlink to 'Share' in '$home_dir' for user '$user'."
+    else
+        echo "[$(date)] Symlink to 'Share' already exists in '$home_dir' for user '$user'."
     fi
 }
 
 process_user() {
     local user="$1"
     local home_dir
+
     home_dir=$(getent passwd "$user" | cut -d: -f6)
 
     if [[ -z "$home_dir" || "$home_dir" != /home/* ]]; then
@@ -201,8 +336,9 @@ process_user() {
         return 1
     fi
 
-    echo "[$(date)] Processing user '$user' with home directory '$home_dir'."
-    copy_template "$user" "$home_dir"
+    echo "[$(date)] Processing user '$user'."
+    copy_template "$user"
+    create_share_symlink "$user"
 }
 
 process_existing_users() {
@@ -226,7 +362,6 @@ poll_for_new_users() {
     while true; do
         sleep "$POLL_INTERVAL"
         current_users=$(awk -F: '{print $1}' /etc/passwd)
-        # Determine new users (requires sorted lists)
         new_users=$(comm -13 <(echo "$previous_users" | sort) <(echo "$current_users" | sort))
         if [ -n "$new_users" ]; then
             echo "[$(date)] Detected new user(s): $new_users"
@@ -274,93 +409,4 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable user-mount.service
 sudo systemctl start user-mount.service
-
-
-######### SINGULARITY #########
-# Install Singularity
-sudo apt-get update
-sudo apt-get update && sudo apt-get install -y \
-    build-essential \
-    libssl-dev \
-    uuid-dev \
-    libgpgme11-dev \
-    squashfs-tools \
-    libseccomp-dev \
-    pkg-config
-
-sudo apt-get install -y build-essential libssl-dev uuid-dev libgpgme11-dev \
-    squashfs-tools libseccomp-dev wget pkg-config git cryptsetup debootstrap
-wget https://dl.google.com/go/go1.13.linux-amd64.tar.gz
-sudo tar --directory=/usr/local -xzvf go1.13.linux-amd64.tar.gz
-export PATH=/usr/local/go/bin:$PATH
-
-wget https://github.com/singularityware/singularity/releases/download/v3.5.3/singularity-3.5.3.tar.gz
-tar -xzvf singularity-3.5.3.tar.gz
-cd singularity
-./mconfig
-cd builddir
-make
-sudo make install
-
-#If you want support for tab completion of Singularity commands, you need to source the appropriate file and add it to the bash completion directory in /etc so that it will be sourced automatically when you start another shell.
-. etc/bash_completion.d/singularity
-sudo cp etc/bash_completion.d/singularity /etc/bash_completion.d/
-
-#Mount E4S App VM (but only after /etc/exports" on the E4S App has been updated with the new head Node Public IP and NFS was started on the E4S App VM
-#Updating /etc/exports on E4S VM run "vi /etc/exports" and add line "/root <public ip>(rw,sync,no_root_squash)" and run "systemctl restart nfs.service"
-sudo mkdir /e4sonpremvm
-sudo mount "$PUBLIC_IP":/root /e4sonpremvm
-
-
-
-
-### CREATE JUPYTER LAB LAUNCHER ###
-
-# Ensure the target user is set
-if [ -z "$TARGET_USER" ]; then
-    echo "Error: TEMPLATE_USER environment variable is not set."
-    exit 1
-fi
-
-# Define paths
-USER_HOME="/home/$TARGET_USER"
-SCRIPT_PATH="$USER_HOME/run_jupyter.sh"
-DESKTOP_FILE="$USER_HOME/.local/share/applications/jupyter-lab.desktop"
-ICON_PATH="/usr/share/icons/hicolor/256x256/apps/jupyter.png"
-
-# Create the script inside the user's home directory
-cat <<EOF > "$SCRIPT_PATH"
-#!/bin/bash
-singularity exec --nv /e4sonpremvm/E4S/24.02/e4s-cuda80-x86_64-24.11.sif bash -c "cd ~ && jupyter-lab"
-EOF
-
-# Make the script executable
-chmod +x "$SCRIPT_PATH"
-chown "$TARGET_USER:$TARGET_USER" "$SCRIPT_PATH"
-
-# Download a Jupyter icon if it doesn't exist
-if [ ! -f "$ICON_PATH" ]; then
-    wget -O "$ICON_PATH" "https://upload.wikimedia.org/wikipedia/commons/3/38/Jupyter_logo.svg"
-fi
-
-# Create a .desktop launcher for Ubuntu UI
-mkdir -p "$USER_HOME/.local/share/applications"
-cat <<EOF > "$DESKTOP_FILE"
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Jupyter Lab
-Comment=Launch Jupyter Lab in Singularity
-Exec=$SCRIPT_PATH
-Icon=$ICON_PATH
-Terminal=false
-Categories=Development;Science;
-EOF
-
-# Make the launcher executable
-chmod +x "$DESKTOP_FILE"
-chown "$TARGET_USER:$TARGET_USER" "$DESKTOP_FILE"
-
-echo "Jupyter Lab launcher created for user $TARGET_USER."
-
 
