@@ -3,10 +3,11 @@
 ##### GLOBAL VARIABLES #####
 
 # Define the target template user where the template directory is located
-TARGET_USER=<user>
+TARGET_USER="hccsadmin1"
 # App VM Public IP
 PUBLIC_IP="10.53.0.15"
-
+# Ignore users who should not have the template or shared directories mounted
+IGNORE_USERS=( "root" "ubuntu" "oddcadmin2" )
 
 
 
@@ -162,22 +163,10 @@ sudo mkdir /e4sonpremvm
 sudo mount "$PUBLIC_IP":/root /e4sonpremvm
 
 
-##### Mount Instructor Directories #####
-
-# mount  target user directory
-sudo chown -R $TARGET_USER:$TARGET_USER /e4sonpremvm/instructor_data/$TARGET_USER
-sudo ln -s /e4sonpremvm/instructor_data/$TARGET_USER/Documents /home/$TARGET_USER/
-sudo ln -s /e4sonpremvm/instructor_data/$TARGET_USER/LabTemplate /home/$TARGET_USER/
-sudo ln -s /e4sonpremvm/instructor_data/$TARGET_USER/Share /home/$TARGET_USER/
-sudo chmod -R 755 /e4sonpremvm/instructor_data/$TARGET_USER/LabTemplate
-sudo chmod -R 755 /e4sonpremvm/instructor_data/$TARGET_USER/Share
-
-
 ##### CREATE JUPYTER LAB LAUNCHER #####
 
-USER_HOME="/home/$TARGET_USER"
 APP_NAME="jupyter_launcher"
-C_FILE="$USER_HOME/$APP_NAME.c"
+C_FILE="/tmp/$APP_NAME.c"
 BIN_PATH="/usr/local/bin/$APP_NAME"
 DESKTOP_FILE="/usr/share/applications/jupyter-lab.desktop"
 ICON_DIR="/usr/share/pixmaps/"
@@ -209,18 +198,18 @@ cat <<EOF > "$C_FILE"
 
 int main() {
     // Show a "Loading..." dialog with no OK button
-    system("zenity --progress --pulsate --text='🟢 Loading Jupyter Lab... Please wait.' --no-cancel --timeout=10 --width=500 &");
+    system("zenity --progress --pulsate --text='Loading Jupyter Lab... Please wait.' --no-cancel --timeout=10 --width=500 &");
 
     // Execute the Singularity command with correct user home
     return system("singularity exec --nv /e4sonpremvm/E4S/24.02/e4s-cuda80-x86_64-24.11.sif bash -c \"cd && jupyter-lab\"");
 }
 EOF
 
-# Compile the C program
-gcc -o "$BIN_PATH" "$C_FILE"
+# Compile the C program with sudo so it can write to /usr/local/bin
+sudo gcc -o "$BIN_PATH" "$C_FILE"
 
-# Ensure the binary is executable
-chmod +x "$BIN_PATH"
+# Ensure the binary is executable and properly owned
+sudo chmod +x "$BIN_PATH"
 sudo chown root:root "$BIN_PATH"  # Root should own global binaries
 
 # Create icons directory if it doesn't exist
@@ -242,7 +231,7 @@ Version=1.0
 Type=Application
 Name=Jupyter Lab
 Comment=Launch Jupyter Lab in Singularity
-Exec=env DISPLAY=:0 $BIN_PATH
+Exec=$BIN_PATH
 Icon=$ICON_PATH
 Terminal=false
 Categories=Development;Science;
@@ -259,6 +248,7 @@ echo "✅ Jupyter Lab launcher created successfully for all users."
 
 
 
+
 ##### MOUNTING OR COPYING TEMPLATE DIRECTORY ######
 # This installation script can be run as a non-root user.
 # It uses sudo where necessary.
@@ -269,21 +259,58 @@ if ! command -v inotifywait &> /dev/null; then
     sudo apt install -y inotify-tools
 fi
 
+
+# Combine arrays and append the literal TARGET_USER (escaped so it stays unexpanded in the generated script)
+combined=( "${IGNORE_USERS[@]}" "${TARGET_USER}" )
+
+# Convert the array to a string with each element quoted
+joined=$(printf '"%s" ' "${combined[@]}")
+joined=${joined% }  # remove the trailing space
+
+
 # Create the service script at /usr/local/bin/user_mount_service.sh
-sudo tee /usr/local/bin/user_mount_service.sh > /dev/null << 'EOF'
+# First part: Expand TARGET_USER so its value is printed
+sudo tee /usr/local/bin/user_mount_service.sh > /dev/null <<EOF
 #!/bin/bash
 # user_mount_service.sh (Polling Version using fast copy)
 # This version polls for new users and copies the template directory
 # to the /home/<user>/Lab/ directory.
 
 # Configuration
-TARGET_USER=$TARGET_USER 
+TARGET_USER="${TARGET_USER}"
+IGNORE_USERS=($joined) 
+EOF
+
+# Second part: Append the rest of the script with literal variables (using a quoted heredoc)
+sudo tee -a /usr/local/bin/user_mount_service.sh > /dev/null <<'EOF'
 TEMPLATE_DIR="/e4sonpremvm/instructor_data/$TARGET_USER/LabTemplate"  # Source template directory
 SHARE_DIR="/e4sonpremvm/instructor_data/$TARGET_USER/Share"  # Shared directory (read-execute only)
-IGNORE_USERS=("root" "ubuntu" "oddcadmin2")  # Users to ignore
 RETRIES=10
 WAIT_TIME=2
 POLL_INTERVAL=10
+
+# mount  target user directory
+FLAG_FILE="/var/tmp/mount_dirs.flag"
+
+if [ ! -f "$FLAG_FILE" ]; then
+  echo "Executing mount setup..."
+  sudo rm -rf /home/"$TARGET_USER"/Documents
+  sudo chown -R "$TARGET_USER":"$TARGET_USER" /e4sonpremvm/instructor_data/"$TARGET_USER"
+  sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Documents /home/"$TARGET_USER"/
+  sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Documents
+  sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate /home/"$TARGET_USER"/
+  sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/LabTemplate
+  sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Share /home/"$TARGET_USER"/
+  sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Share
+  sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate
+  sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/Share
+
+  # Mark the commands as done
+  touch "$FLAG_FILE"
+else
+  echo "Mount setup have already been executed. Skipping..."
+fi
+
 
 # Helper Functions
 is_ignored_user() {
