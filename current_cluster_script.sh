@@ -4,12 +4,18 @@
 
 # Define the target template user where the template directory is located
 TARGET_USER="hccsadmin1"
+
 # App VM Public IP
 PUBLIC_IP="10.53.0.15"
+
 # Ignore users who should not have the template or shared directories mounted
-IGNORE_USERS=( "root" "ubuntu" "oddcadmin2" )
+IGNORE_USERS=("root" "ubuntu" "oddcadmin2")
+
+# CPU quota as a percentage of total CPU cores per user
+CPU_LIMIT=200
 
 
+##### NVIDIA DRIVER INSTALLATION #####
 
 set -e  # Exit immediately if a command exits with a non-zero status
 export DEBIAN_FRONTEND=noninteractive
@@ -261,11 +267,11 @@ fi
 
 
 # Combine arrays and append the literal TARGET_USER (escaped so it stays unexpanded in the generated script)
-combined=( "${IGNORE_USERS[@]}" "${TARGET_USER}" )
+# combined=( "${IGNORE_USERS[@]}" "${TARGET_USER}" )
 
-# Convert the array to a string with each element quoted
-joined=$(printf '"%s" ' "${combined[@]}")
-joined=${joined% }  # remove the trailing space
+# # Convert the array to a string with each element quoted
+# joined=$(printf '"%s" ' "${combined[@]}")
+# joined=${joined% }  # remove the trailing space
 
 
 # Create the service script at /usr/local/bin/user_mount_service.sh
@@ -278,7 +284,7 @@ sudo tee /usr/local/bin/user_mount_service.sh > /dev/null <<EOF
 
 # Configuration
 TARGET_USER="${TARGET_USER}"
-IGNORE_USERS=($joined) 
+IGNORE_USERS="${IGNORE_USERS}"
 EOF
 
 # Second part: Append the rest of the script with literal variables (using a quoted heredoc)
@@ -289,27 +295,20 @@ RETRIES=10
 WAIT_TIME=2
 POLL_INTERVAL=10
 
-# mount  target user directory
-FLAG_FILE="/var/tmp/mount_dirs.flag"
 
-if [ ! -f "$FLAG_FILE" ]; then
-  echo "Executing mount setup..."
-  sudo rm -rf /home/"$TARGET_USER"/Documents
-  sudo chown -R "$TARGET_USER":"$TARGET_USER" /e4sonpremvm/instructor_data/"$TARGET_USER"
-  sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Documents /home/"$TARGET_USER"/
-  sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Documents
-  sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate /home/"$TARGET_USER"/
-  sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/LabTemplate
-  sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Share /home/"$TARGET_USER"/
-  sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Share
-  sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate
-  sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/Share
+echo "Executing mount setup..."
+sudo rm -rf /home/"$TARGET_USER"/Documents
+sudo chown -R "$TARGET_USER":"$TARGET_USER" /e4sonpremvm/instructor_data/"$TARGET_USER"
+sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Documents /home/"$TARGET_USER"/
+sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Documents
+sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate /home/"$TARGET_USER"/
+sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/LabTemplate
+sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Share /home/"$TARGET_USER"/
+sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Share
+sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate
+sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/Share
 
-  # Mark the commands as done
-  touch "$FLAG_FILE"
-else
-  echo "Mount setup have already been executed. Skipping..."
-fi
+# Mark the commands as done
 
 
 # Helper Functions
@@ -436,4 +435,24 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable user-mount.service
 sudo systemctl start user-mount.service
+
+
+###### LIMIT CORES PER USER ######
+
+SLICE_NAME="custom.slice"
+SLICE_FILE="/etc/systemd/system/$SLICE_NAME"
+
+# Create or update the slice configuration file
+echo "[Slice]
+CPUQuota=${CPU_LIMIT}%" | sudo tee "$SLICE_FILE" > /dev/null
+
+# Reload systemd to apply changes
+sudo systemctl daemon-reload
+sudo systemctl restart systemd-logind.service
+
+# Verify the slice configuration
+echo "Slice configuration applied. Checking status..."
+systemctl show "$SLICE_NAME" | grep CPUQuota
+
+
 
