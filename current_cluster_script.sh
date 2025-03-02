@@ -267,7 +267,7 @@ fi
 
 
 # Combine arrays and append the literal TARGET_USER (escaped so it stays unexpanded in the generated script)
-# combined=( "${IGNORE_USERS[@]}" "${TARGET_USER}" )
+# combined=( "${IGNORE_USERS[@]}" "'$TARGET_USER'" )
 
 # # Convert the array to a string with each element quoted
 # joined=$(printf '"%s" ' "${combined[@]}")
@@ -284,7 +284,7 @@ sudo tee /usr/local/bin/user_mount_service.sh > /dev/null <<EOF
 
 # Configuration
 TARGET_USER="${TARGET_USER}"
-IGNORE_USERS="${IGNORE_USERS}"
+IGNORE_USERS="${IGNORE_USERS[@]}"
 EOF
 
 # Second part: Append the rest of the script with literal variables (using a quoted heredoc)
@@ -294,21 +294,6 @@ SHARE_DIR="/e4sonpremvm/instructor_data/$TARGET_USER/Share"  # Shared directory 
 RETRIES=10
 WAIT_TIME=2
 POLL_INTERVAL=10
-
-
-echo "Executing mount setup..."
-sudo rm -rf /home/"$TARGET_USER"/Documents
-sudo chown -R "$TARGET_USER":"$TARGET_USER" /e4sonpremvm/instructor_data/"$TARGET_USER"
-sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Documents /home/"$TARGET_USER"/
-sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Documents
-sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate /home/"$TARGET_USER"/
-sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/LabTemplate
-sudo ln -s /e4sonpremvm/instructor_data/"$TARGET_USER"/Share /home/"$TARGET_USER"/
-sudo chown -R "$TARGET_USER":"$TARGET_USER" /home/"$TARGET_USER"/Share
-sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/LabTemplate
-sudo chmod -R 755 /e4sonpremvm/instructor_data/"$TARGET_USER"/Share
-
-# Mark the commands as done
 
 
 # Helper Functions
@@ -325,9 +310,7 @@ is_ignored_user() {
 copy_template() {
     local user="$1"
     local lab_dir="/home/$user/Lab"
-
     mkdir -p "$lab_dir"
-
     if tar cf - -C "$TEMPLATE_DIR" . | tar xf - --no-same-owner --no-same-permissions -C "$lab_dir"; then
         chown -R "$user:$user" "$lab_dir"
         echo "[$(date)] Successfully copied '$TEMPLATE_DIR' to '$lab_dir' for user '$user'."
@@ -342,20 +325,18 @@ create_share_symlink() {
     local user="$1"
     local home_dir="/home/$user"
     local share_link="$home_dir/Share"
-
-    if [ ! -L "$share_link" ]; then
-        ln -s "$SHARE_DIR" "$share_link"
-        echo "[$(date)] Created symlink to 'Share' in '$home_dir' for user '$user'."
+    if [ ! -L "$share_link" ] || [ "$(stat -c %U "$share_link")" != "$user" ]; then
+        sudo ln -sf "$SHARE_DIR" "$share_link"
+        sudo chown -h "$user":"$user" "$share_link"
+        echo "[$(date)] Created/fixed symlink to 'Share' in '$home_dir' for user '$user'."
     else
-        echo "[$(date)] Symlink to 'Share' already exists in '$home_dir' for user '$user'."
+        echo "[$(date)] Symlink to 'Share' already correct in '$home_dir' for user '$user'."
     fi
 }
 
 process_user() {
     local user="$1"
-    local home_dir
-
-    home_dir=$(getent passwd "$user" | cut -d: -f6)
+    local home_dir=$(getent passwd "$user" | cut -d: -f6)
 
     if [[ -z "$home_dir" || "$home_dir" != /home/* ]]; then
         echo "[$(date)] Skipping user '$user' because their home directory '$home_dir' is not in /home/."
@@ -363,8 +344,20 @@ process_user() {
     fi
 
     echo "[$(date)] Processing user '$user'."
-    copy_template "$user"
-    create_share_symlink "$user"
+    if [[ "$user" == "$TARGET_USER" ]]; then
+        # Special handling for target user
+        sudo rm -rf "$home_dir/Documents"
+        sudo ln -sf "/e4sonpremvm/instructor_data/$user/Documents" "$home_dir/Documents"
+        sudo ln -sf "/e4sonpremvm/instructor_data/$user/LabTemplate" "$home_dir/LabTemplate"
+        sudo ln -sf "/e4sonpremvm/instructor_data/$user/Share" "$home_dir/Share"
+        sudo chown -h "$user":"$user" "$home_dir/Documents" "$home_dir/LabTemplate" "$home_dir/Share"
+        sudo chown -R "$user":"$user" "/e4sonpremvm/instructor_data/$user"
+        sudo chmod -R 755 "/e4sonpremvm/instructor_data/$user/LabTemplate" "/e4sonpremvm/instructor_data/$user/Share"
+    else
+        # Other users get Lab and Share
+        copy_template "$user"
+        create_share_symlink "$user"
+    fi
 }
 
 process_existing_users() {
@@ -378,13 +371,10 @@ process_existing_users() {
     done < /etc/passwd
 }
 
-# Polling function to detect new users
 poll_for_new_users() {
     local previous_users current_users new_users
-
     previous_users=$(awk -F: '{print $1}' /etc/passwd)
     echo "[$(date)] Starting polling for new users..."
-
     while true; do
         sleep "$POLL_INTERVAL"
         current_users=$(awk -F: '{print $1}' /etc/passwd)
@@ -402,10 +392,7 @@ poll_for_new_users() {
 }
 
 # Main Execution
-# Process existing users on startup
 process_existing_users
-
-# Now start polling for new users
 poll_for_new_users
 EOF
 
@@ -453,6 +440,10 @@ sudo systemctl restart systemd-logind.service
 # Verify the slice configuration
 echo "Slice configuration applied. Checking status..."
 systemctl show "$SLICE_NAME" | grep CPUQuota
+
+
+##### DISABLE UBUNTU UPDATE PROMPTS #####
+sudo sed -i 's/^Prompt=.*$/Prompt=never/' /etc/update-manager/release-upgrades
 
 
 
