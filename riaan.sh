@@ -2,12 +2,13 @@
 
 ##### GLOBAL VARIABLES #####
 
+echo "=== Setting global variables... ==="
 # CPU quota as a percentage of total CPU cores per user
-CPU_LIMIT=200
+CPU_LIMIT=4800
 
 # Need Sharing and Template directories to be mounted in the user's home directory
 # If false it will not mount the directories and TARGET_USER, IGNORE_USERS and PUBLIC_IP will be ignored
-MOUNTING=true
+MOUNTING=false
 
 # Define the target template user where the template directory is located
 TARGET_USER="hccsadmin1"
@@ -18,80 +19,102 @@ PUBLIC_IP="10.53.0.15"
 # Ignore users who should not have the template or shared directories mounted
 IGNORE_USERS=("root" "ubuntu" "oddcadmin2")
 
-
-
-
-##### NVIDIA DRIVER INSTALLATION #####
-
 set -e  # Exit immediately if a command exits with a non-zero status
+
+echo "=== Configuring  needrestart ==="
+
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
 
-echo "Checking for NVIDIA GPU..."
-if ! lspci | grep -i nvidia &>/dev/null; then
-    echo "No NVIDIA GPU detected. Skipping NVIDIA driver installation."
-    exit 0
+# Pre-seed needrestart config to never prompt (if installed)
+CONFIG_FILE="/etc/needrestart/needrestart.conf"
+TEMP_FILE="$(mktemp)"
+
+if command -v needrestart >/dev/null 2>&1; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+    sudo sed -i "s|^#\$nrconf{restart} = .;|\$nrconf{restart} = 'a';|" "$CONFIG_FILE"
+    echo "Updated $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  else
+    echo "\$nrconf{restart} = 'a';" | sudo tee "$CONFIG_FILE"
+    echo "Created $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  fi
 fi
 
-# Suppress service restart prompts
-if [ -f /etc/needrestart/needrestart.conf ]; then
-    sudo sed -i 's/#$nrconf{restart} = .*/$nrconf{restart} = "a";/' /etc/needrestart/needrestart.conf
-fi
+# Preseed debconf to never prompt for library restarts
 echo '* libraries/restart-without-asking boolean true' | sudo debconf-set-selections
 
+# Always ensure needrestart never prompts, even if installed later
+sudo bash -c 'echo "$nrconf{restart} = '\''a'\'';" > /etc/needrestart/needrestart.conf'
+
+##### NVIDIA DRIVER INSTALLATION #####
+#
+#set -e  # Exit immediately if a command exits with a non-zero status
+#export DEBIAN_FRONTEND=noninteractive
+#
+#echo "Checking for NVIDIA GPU..."
+#if ! lspci | grep -i nvidia &>/dev/null; then
+#    echo "No NVIDIA GPU detected. Skipping NVIDIA driver installation."
+#    exit 0
+#fi
+#
+# Suppress service restart prompts
+#if [ -f /etc/needrestart/needrestart.conf ]; then
+#    sudo sed -i 's/#$nrconf{restart} = .*/$nrconf{restart} = "a";/' /etc/needrestart/needrestart.conf
+#fi
+#echo '* libraries/restart-without-asking boolean true' | sudo debconf-set-selections
+#
 # Update and upgrade packages
-sudo apt update -y
+#sudo apt update -y
 # sudo apt upgrade -y
-sudo apt --fix-broken install -y
-
+#sudo apt --fix-broken install -y
+#
 # Install required kernel headers
-sudo apt install -y linux-headers-$(uname -r)
-
+#sudo apt install -y linux-headers-$(uname -r)
+#
 # Remove any existing NVIDIA drivers
-sudo apt purge -y nvidia-*
-
+#sudo apt purge -y nvidia-*
+#
 # Install NVIDIA driver
-sudo apt install -y nvidia-driver-535-server
-
+#sudo apt install -y nvidia-driver-535-server
+#
 # Rebuild DKMS modules
-sudo dkms autoinstall
-
+#sudo dkms autoinstall
+#
 # Blacklist Nouveau
-echo "blacklist nouveau" | sudo tee /etc/modprobe.d/blacklist-nouveau.conf
-echo "options nouveau modeset=0" | sudo tee -a /etc/modprobe.d/blacklist-nouveau.conf
-
+#echo "blacklist nouveau" | sudo tee /etc/modprobe.d/blacklist-nouveau.conf
+#echo "options nouveau modeset=0" | sudo tee -a /etc/modprobe.d/blacklist-nouveau.conf
+#
 # Update initramfs
-sudo update-initramfs -u
-
+#sudo update-initramfs -u
+#
 # Remove and load necessary kernel modules
-sudo modprobe -r nouveau || true
-sudo modprobe nvidia || true
-
+#sudo modprobe -r nouveau || true
+#sudo modprobe nvidia || true
+#
 # Restart GPU manager
-sudo systemctl restart gpu-manager || echo "GPU manager restart failed, continuing."
-
+#sudo systemctl restart gpu-manager || echo "GPU manager restart failed, continuing."
+#
 # Verify NVIDIA driver
-echo "Verifying NVIDIA driver installation..."
-if nvidia-smi &>/dev/null; then
-    echo "NVIDIA driver successfully activated."
-else
-    echo "Failed to activate NVIDIA driver. Ensure installation was successful."
-fi
-
+#echo "Verifying NVIDIA driver installation..."
+#if nvidia-smi &>/dev/null; then
+#    echo "NVIDIA driver successfully activated."
+#else
+#    echo "Failed to activate NVIDIA driver. Ensure installation was successful."
+#fi
+#
 # Enable NVIDIA persistence mode (optional)
-sudo nvidia-smi -pm 1
-
+#sudo nvidia-smi -pm 1
+#
 # Disable MIG
-sudo nvidia-smi -mig 0
-
-echo "NVIDIA driver installation complete!"
+#sudo nvidia-smi -mig 0
+#
+#echo "NVIDIA driver installation complete!"
 
 # Function to print status messages
 echo_status() {
     echo -e "\e[1;32m$1\e[0m"
 }
-
-
-
 
 ###### FIX FIREFOX ######
 
@@ -118,7 +141,7 @@ sudo add-apt-repository -y ppa:mozillateam/ppa
 
 # Step 6: Update package lists
 echo_status "Updating package lists..."
-sudo apt update
+sudo apt update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 # Step 7: Check if correct Firefox package is available
 echo_status "Checking available Firefox versions..."
@@ -126,7 +149,7 @@ apt policy firefox
 
 # Step 8: Install Firefox from the PPA
 echo_status "Installing Firefox from Mozilla PPA..."
-sudo apt install -y firefox
+sudo apt install -y firefox -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 # Step 9: Verify installation
 echo_status "Verifying Firefox installation..."
@@ -141,18 +164,20 @@ echo_status "Firefox installation completed successfully."
 
 ######### SINGULARITY #########
 # Install Singularity
-sudo apt-get update
-sudo apt-get update && sudo apt-get install -y \
+sudo apt-get update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+sudo apt-get update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" && sudo apt-get install -y \
     build-essential \
     libssl-dev \
     uuid-dev \
     libgpgme11-dev \
     squashfs-tools \
     libseccomp-dev \
-    pkg-config
+    pkg-config \
+    -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 sudo apt-get install -y build-essential libssl-dev uuid-dev libgpgme11-dev \
-    squashfs-tools libseccomp-dev wget pkg-config git cryptsetup debootstrap
+    squashfs-tools libseccomp-dev wget pkg-config git cryptsetup debootstrap \
+    -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 wget https://dl.google.com/go/go1.13.linux-amd64.tar.gz
 sudo tar --directory=/usr/local -xzvf go1.13.linux-amd64.tar.gz
 export PATH=/usr/local/go/bin:$PATH
@@ -194,7 +219,7 @@ fi
 # Ensure GCC is installed
 if ! command -v gcc &> /dev/null; then
     echo "Error: GCC is not installed. Installing..."
-    sudo apt update && sudo apt install -y gcc
+    sudo apt update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" && sudo apt install -y gcc -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 fi
 
 # Ensure Singularity is installed
@@ -252,10 +277,10 @@ EOF
 # Ensure the desktop file has correct permissions
 sudo chmod 644 "$DESKTOP_FILE"
 
-# Refresh Ubuntu’s application database
+# Refresh Ubuntuâs application database
 sudo update-desktop-database "/usr/share/applications"
 
-echo "✅ Jupyter Lab launcher created successfully for all users."
+echo "â Jupyter Lab launcher created successfully for all users."
 
 
 
@@ -269,8 +294,8 @@ if [ "$MOUNTING" = true ]; then
 
     # Install inotify-tools if not present
     if ! command -v inotifywait &> /dev/null; then
-        sudo apt update
-        sudo apt install -y inotify-tools
+        sudo apt update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+        sudo apt install -y inotify-tools -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
     fi
 
 
@@ -454,6 +479,3 @@ systemctl show "$SLICE_NAME" | grep CPUQuota
 
 ##### DISABLE UBUNTU UPDATE PROMPTS #####
 sudo sed -i 's/^Prompt=.*$/Prompt=never/' /etc/update-manager/release-upgrades
-
-
-
