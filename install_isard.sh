@@ -3,6 +3,22 @@ set -euo pipefail
 
 # make sure apt never prompts
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
+# Pre-seed needrestart config to never prompt (if installed)
+CONFIG_FILE="/etc/needrestart/needrestart.conf"
+TEMP_FILE="$(mktemp)"
+
+if command -v needrestart >/dev/null 2>&1; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+    sudo sed -i "s|^#*\$nrconf{restart} = .*;|\$nrconf{restart} = 'a';|" "$CONFIG_FILE"
+    echo "Updated $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  else
+    echo "\$nrconf{restart} = 'a';" | sudo tee "$CONFIG_FILE"
+    echo "Created $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  fi
+fi
 
 echo "==> Disabling nginx service if present..."
 if systemctl list-unit-files | grep -q '^nginx.service'; then
@@ -38,7 +54,9 @@ sudo apt-get install -y \
     ca-certificates \
     curl \
     gnupg \
-    lsb-release
+    lsb-release \
+    --option=Dpkg::Options::="--force-confdef" \
+    --option=Dpkg::Options::="--force-confold"
 
 echo "==> Creating keyrings directory..."
 sudo mkdir -m 0755 -p /etc/apt/keyrings
@@ -66,7 +84,9 @@ sudo apt-get install -y \
     docker-ce-cli \
     containerd.io \
     docker-buildx-plugin \
-    docker-compose-plugin
+    docker-compose-plugin \
+    --option=Dpkg::Options::="--force-confdef" \
+    --option=Dpkg::Options::="--force-confold"
 
 echo "==> Verifying Docker installation..."
 sudo docker --version
@@ -93,6 +113,11 @@ cd isardvdi
 
 echo "==> Copying example config..."
 cp isardvdi.cfg.example isardvdi.cfg
+
+echo "==> Configuring isardvdi.cfg..."
+PUBLIC_IP=$(curl -fsSL http://checkip.amazonaws.com) 
+sed -i "s|^DOMAIN=.*|DOMAIN=${PUBLIC_IP}|" isardvdi.cfg
+sed -i "s|^WEBAPP_ADMIN_PWD=.*|WEBAPP_ADMIN_PWD=HeidiVDIApp|" isardvdi.cfg
 
 echo "==> Running build script..."
 ./build.sh
@@ -152,3 +177,4 @@ sudo docker compose up -d
 
 echo
 echo "ISARD VDI up and running."
+
