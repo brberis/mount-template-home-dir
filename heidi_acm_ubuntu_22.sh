@@ -9,24 +9,33 @@
 ##### GLOBAL VARIABLES #####
 
 echo "=== Setting global variables... ==="
-# CPU quota as a percentage of total CPU cores per user
-CPU_LIMIT=4800
+
+# Number of users that going to use the system simultaneously. (There is no hard limit, but this is a soft limit to calculate CPU quota)
+# Use 1 if you want to diable CPU quota limiting per user.
+USERS_QUOTA=15
 
 # Need Sharing and Template directories to be mounted in the user's home directory
-# If false it will not mount the directories and TARGET_USER, IGNORE_USERS and PUBLIC_IP will be ignored
-MOUNTING=false
+# If false it will not mount the directories and TARGET_USER, IGNORE_USERS and PERSISTENT_STORAGE_SERVICE_IP will be ignored
+MOUNTING=true
 
 # Define the target template user where the template directory is located
-TARGET_USER="hccsadmin1"
+TARGET_USER="mdcadmin1"
 
 # Persistent storage for users VM Public IP
-PUBLIC_IP="10.53.0.15"
+PERSISTENT_STORAGE_SERVICE_IP="10.53.0.15"
 
 # Ignore users who should not have the template or shared directories mounted
-IGNORE_USERS=("root" "ubuntu" "oddcadmin2")
+IGNORE_USERS=("root" "ubuntu" "mdcadmin1")
 
+######################################################################
+### Don't modify below this line unless you know what you're doing ###
+######################################################################
 
+# Number of CPU cores available on the system
+NUM_CORES=$(nproc)
 
+# CPU quota as a percentage of total CPU cores per user
+CPU_LIMIT=$((($NUM_CORES * 100) / $USERS_QUOTA))
 
 ##### IP VERIFICATION #####
 
@@ -268,7 +277,7 @@ sudo cp etc/bash_completion.d/singularity /etc/bash_completion.d/
 #Mount E4S App VM (but only after /etc/exports" on the E4S App has been updated with the new head Node Public IP and NFS was started on the E4S App VM
 #Updating /etc/exports on E4S VM run "vi /etc/exports" and add line "/root <public ip>(rw,sync,no_root_squash)" and run "systemctl restart nfs.service"
 sudo mkdir /e4sonpremvm
-sudo mount "$PUBLIC_IP":/root /e4sonpremvm
+sudo mount "$PERSISTENT_STORAGE_SERVICE_IP":/root /e4sonpremvm
 
 
 ##### CREATE JUPYTER LAB LAUNCHER #####
@@ -352,9 +361,6 @@ sudo chmod 644 "$DESKTOP_FILE"
 sudo update-desktop-database "/usr/share/applications"
 
 echo "Ã¢ÂÂ Jupyter Lab launcher created successfully for all users."
-
-
-
 
 
 ##### MOUNTING OR COPYING TEMPLATE DIRECTORY ######
@@ -450,11 +456,12 @@ process_user() {
     echo "[$(date)] Processing user '$user'."
     if [[ "$user" == "$TARGET_USER" ]]; then
         # Special handling for target user
-        sudo rm -rf "$home_dir/Documents"
-        sudo ln -sf "/e4sonpremvm/instructor_data/$user/Documents" "$home_dir/Documents"
+        # sudo rm -rf "$home_dir/Documents"
+        # sudo ln -sf "/e4sonpremvm/instructor_data/$user/Documents" "$home_dir/Documents"
         sudo ln -sf "/e4sonpremvm/instructor_data/$user/LabTemplate" "$home_dir/LabTemplate"
         sudo ln -sf "/e4sonpremvm/instructor_data/$user/Share" "$home_dir/Share"
-        sudo chown -h "$user":"$user" "$home_dir/Documents" "$home_dir/LabTemplate" "$home_dir/Share"
+        # sudo chown -h "$user":"$user" "$home_dir/Documents" "$home_dir/LabTemplate" "$home_dir/Share"
+        # sudo chown -h "$user":"$user" "$home_dir/LabTemplate" "$home_dir/Share"
         sudo chown -R "$user":"$user" "/e4sonpremvm/instructor_data/$user"
         sudo chmod -R 755 "/e4sonpremvm/instructor_data/$user/LabTemplate" "/e4sonpremvm/instructor_data/$user/Share"
     else

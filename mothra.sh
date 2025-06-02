@@ -1,8 +1,31 @@
 #!/bin/bash
 APP_IP="128.223.202.65"
 
+##### NVIDIA DRIVER INSTALLATION #####
+
 set -e  # Exit immediately if a command exits with a non-zero status
 export DEBIAN_FRONTEND=noninteractive
+
+# --- Begin: Fix NVIDIA package conflicts and held packages ---
+echo "Cleaning up old/conflicting NVIDIA packages and held packages..."
+
+# Unhold any held NVIDIA packages
+sudo apt-mark unhold nvidia-driver nvidia-driver-535 nvidia-driver-535-server libnvidia-common libnvidia-common-535 libnvidia-common-535-server || true
+
+# Remove conflicting NVIDIA packages
+sudo apt-get purge -y 'nvidia-*' 'libnvidia-*' || true
+
+# Clean up broken dependencies
+sudo apt-get autoremove -y
+sudo apt-get autoclean -y
+sudo apt-get clean
+
+# Remove any residual config
+sudo dpkg --purge $(dpkg -l | awk '/^rc/ { print $2 }') || true
+
+# Update package lists
+sudo apt-get update -y
+# --- End: Fix NVIDIA package conflicts and held packages ---
 
 echo "Checking for NVIDIA GPU..."
 if ! lspci | grep -i nvidia &>/dev/null; then
@@ -57,6 +80,9 @@ fi
 
 # Enable NVIDIA persistence mode (optional)
 sudo nvidia-smi -pm 1
+
+# Disable MIG
+sudo nvidia-smi -mig 0
 
 echo "NVIDIA driver installation complete!"
 
