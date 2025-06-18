@@ -1,0 +1,82 @@
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ----------------------------------------
+# Function: check if this host matches server.nodus.com
+# ----------------------------------------
+check_server_ip() {
+  echo "=== Verifying server identity ==="
+  SERVER_IP=$(grep -w "server.nodus.com" /etc/hosts | awk '{print $1}')
+  if [ -z "$SERVER_IP" ]; then
+    echo "Warning: server.nodus.com not in /etc/hosts - assuming non-head node."
+    return 1
+  fi
+
+  echo "Server IP from /etc/hosts: $SERVER_IP"
+  echo "Checking local IP addresses:"
+  for IP in $(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1"); do
+    echo " - Found local IP: $IP"
+    if [ "$IP" == "$SERVER_IP" ]; then
+      echo " - MATCH: This IP matches server.nodus.com"
+      return 0
+    fi
+  done
+
+  echo "Warning: This is not server.nodus.com (no IP match)."
+  return 1
+}
+
+# ----------------------------------------
+# 1) Install ParaTools e4s-cloud-examples
+# ----------------------------------------
+VER=1.12
+echo "==> Creating /opt/homedir-install"
+sudo mkdir -p /opt/homedir-install
+
+echo "==> cd /tmp"
+cd /tmp
+
+echo "==> Downloading e4s-cloud-examples v${VER}"
+F="v${VER}.tar.gz"
+wget -q "https://github.com/ParaToolsInc/e4s-cloud-examples/archive/refs/tags/${F}"
+
+echo "==> Extracting"
+tar xzf "${F}"
+rm -f "${F}"
+sudo mv "e4s-cloud-examples-${VER}" /opt/homedir-install/
+
+# ----------------------------------------
+# 2) Configure Torque MOM if running
+# ----------------------------------------
+CONFIG_FILE=/var/spool/torque/mom_priv/config
+if systemctl --type=service --state=running | grep -q pbs_mom; then
+  echo "==> Appending PBS MOM config"
+  sudo tee -a "${CONFIG_FILE}" >/dev/null <<'EOF'
+$usecp *:/home /home
+$spool_as_final_name true
+EOF
+  echo "==> Restarting pbs_mom"
+  sudo systemctl restart pbs_mom
+fi
+
+echo "==> Dumping running services"
+systemctl --type=service --state=running > /tmp/provisioner-running-services.txt
+
+# ----------------------------------------
+# 3) Conditionally install AWS EFA
+# ----------------------------------------
+if check_server_ip; then
+  echo "==> Installing AWS EFA"
+  curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
+  tar -xf aws-efa-installer-latest.tar.gz
+  cd aws-efa-installer
+  echo "Running efa_installer.sh -y"
+  sudo ./efa_installer.sh -y
+  echo "EFA installation complete"
+else
+  echo "==> Skipping AWS EFA installation (IP check failed)"
+fi
+
+echo "==> All done"
+```
