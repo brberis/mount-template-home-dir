@@ -3,8 +3,15 @@
 # Script to disable Kubernetes and free up network resources
 # This script removes K3s, Docker, and all associated network interfaces
 
-
 set -e
+
+# Check if user has sudo access
+if ! sudo -n true 2>/dev/null; then
+    echo "ERROR: This script requires sudo access."
+    echo "Please run: sudo -v"
+    echo "Then run this script again as: ./disable_kubernetes.sh"
+    exit 1
+fi
 
 # Create log file for unattended execution
 LOG_FILE="/tmp/disable_kubernetes_$(date +%Y%m%d_%H%M%S).log"
@@ -13,6 +20,7 @@ echo "=== Kubernetes Disable Script (Unattended Mode) ==="
 echo "Starting automatic Kubernetes cleanup process..."
 echo "Timestamp: $(date)"
 echo "Log file: $LOG_FILE"
+echo "User: $(whoami) (with sudo access)"
 echo ""
 
 # Redirect all output to both console and log file
@@ -29,12 +37,12 @@ stop_service() {
     local service_name=$1
     if systemctl is-active --quiet "$service_name" 2>/dev/null; then
         log "Stopping $service_name service..."
-        systemctl stop "$service_name" || log "Warning: Failed to stop $service_name"
+        sudo systemctl stop "$service_name" || log "Warning: Failed to stop $service_name"
     fi
     
     if systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
         log "Disabling $service_name service..."
-        systemctl disable "$service_name" || log "Warning: Failed to disable $service_name"
+        sudo systemctl disable "$service_name" || log "Warning: Failed to disable $service_name"
     fi
 }
 
@@ -43,7 +51,7 @@ remove_interface() {
     local interface=$1
     if ip link show "$interface" >/dev/null 2>&1; then
         log "Removing network interface: $interface"
-        ip link delete "$interface" 2>/dev/null || log "Warning: Failed to remove $interface"
+        sudo ip link delete "$interface" 2>/dev/null || log "Warning: Failed to remove $interface"
     fi
 }
 
@@ -53,13 +61,13 @@ kill_processes() {
     local pids=$(pgrep -f "$pattern" 2>/dev/null || true)
     if [ -n "$pids" ]; then
         log "Killing processes matching '$pattern': $pids"
-        kill -TERM $pids 2>/dev/null || true
+        sudo kill -TERM $pids 2>/dev/null || true
         sleep 5
         # Force kill if still running
         pids=$(pgrep -f "$pattern" 2>/dev/null || true)
         if [ -n "$pids" ]; then
             log "Force killing processes: $pids"
-            kill -KILL $pids 2>/dev/null || true
+            sudo kill -KILL $pids 2>/dev/null || true
         fi
     fi
 }
@@ -97,7 +105,7 @@ log "Removing veth interfaces..."
 for veth in $(ip link show type veth | grep -oE 'veth[a-zA-Z0-9]+' | head -20); do
     if [ -n "$veth" ]; then
         log "Removing veth interface: $veth"
-        ip link delete "$veth" 2>/dev/null || log "Warning: Failed to remove $veth"
+        sudo ip link delete "$veth" 2>/dev/null || log "Warning: Failed to remove $veth"
     fi
 done
 
@@ -118,7 +126,7 @@ done
 log "Step 6: Cleaning up network namespaces..."
 for ns in $(ip netns list 2>/dev/null | grep -E "cni-|sandbox-" | awk '{print $1}' || true); do
     log "Removing network namespace: $ns"
-    ip netns delete "$ns" 2>/dev/null || log "Warning: Failed to remove namespace $ns"
+    sudo ip netns delete "$ns" 2>/dev/null || log "Warning: Failed to remove namespace $ns"
 done
 
 # Step 7: Unmount K3s and containerd mounts
@@ -126,39 +134,39 @@ log "Step 7: Unmounting K3s and containerd filesystems..."
 # Get all k3s and containerd related mounts
 for mount in $(mount | grep -E "/run/k3s|/var/lib/kubelet" | awk '{print $3}' | sort -r); do
     log "Unmounting: $mount"
-    umount -l "$mount" 2>/dev/null || log "Warning: Failed to unmount $mount"
+    sudo umount -l "$mount" 2>/dev/null || log "Warning: Failed to unmount $mount"
 done
 
 # Step 8: Remove iptables rules
 log "Step 8: Cleaning up iptables rules..."
 # Flush CNI and K3s related chains
-iptables -t nat -F PREROUTING 2>/dev/null || true
-iptables -t nat -F POSTROUTING 2>/dev/null || true
-iptables -t filter -F FORWARD 2>/dev/null || true
+sudo iptables -t nat -F PREROUTING 2>/dev/null || true
+sudo iptables -t nat -F POSTROUTING 2>/dev/null || true
+sudo iptables -t filter -F FORWARD 2>/dev/null || true
 
 # Remove custom chains
-for chain in $(iptables -t nat -L | grep -E "CNI|K3S|FLANNEL" | awk '{print $2}' || true); do
-    iptables -t nat -F "$chain" 2>/dev/null || true
-    iptables -t nat -X "$chain" 2>/dev/null || true
+for chain in $(sudo iptables -t nat -L | grep -E "CNI|K3S|FLANNEL" | awk '{print $2}' || true); do
+    sudo iptables -t nat -F "$chain" 2>/dev/null || true
+    sudo iptables -t nat -X "$chain" 2>/dev/null || true
 done
 
-for chain in $(iptables -t filter -L | grep -E "CNI|K3S|FLANNEL" | awk '{print $2}' || true); do
-    iptables -t filter -F "$chain" 2>/dev/null || true
-    iptables -t filter -X "$chain" 2>/dev/null || true
+for chain in $(sudo iptables -t filter -L | grep -E "CNI|K3S|FLANNEL" | awk '{print $2}' || true); do
+    sudo iptables -t filter -F "$chain" 2>/dev/null || true
+    sudo iptables -t filter -X "$chain" 2>/dev/null || true
 done
 
 # Step 9: Remove routing rules
 log "Step 9: Removing Kubernetes routing rules..."
 # Remove routes for pod networks
-ip route del 10.42.0.0/24 2>/dev/null || true
-ip route del 172.17.0.0/16 2>/dev/null || true
+sudo ip route del 10.42.0.0/24 2>/dev/null || true
+sudo ip route del 172.17.0.0/16 2>/dev/null || true
 
 # Step 10: Clean up directories (automatic removal)
 log "Step 10: Removing K3s data directories..."
-rm -rf /var/lib/rancher/k3s 2>/dev/null || log "Warning: Failed to remove /var/lib/rancher/k3s"
-rm -rf /var/lib/kubelet 2>/dev/null || log "Warning: Failed to remove /var/lib/kubelet"
-rm -rf /etc/rancher 2>/dev/null || log "Warning: Failed to remove /etc/rancher"
-rm -rf /run/k3s 2>/dev/null || log "Warning: Failed to remove /run/k3s"
+sudo rm -rf /var/lib/rancher/k3s 2>/dev/null || log "Warning: Failed to remove /var/lib/rancher/k3s"
+sudo rm -rf /var/lib/kubelet 2>/dev/null || log "Warning: Failed to remove /var/lib/kubelet"
+sudo rm -rf /etc/rancher 2>/dev/null || log "Warning: Failed to remove /etc/rancher"
+sudo rm -rf /run/k3s 2>/dev/null || log "Warning: Failed to remove /run/k3s"
 
 # Step 10.5: Final network cleanup (after data removal)
 log "Step 10.5: Final network interface cleanup..."
@@ -166,7 +174,7 @@ sleep 2  # Give time for interfaces to settle
 for veth in $(ip link show type veth | grep -oE 'veth[a-zA-Z0-9]+' 2>/dev/null || true); do
     if [ -n "$veth" ]; then
         log "Final cleanup of veth interface: $veth"
-        ip link delete "$veth" 2>/dev/null || true
+        sudo ip link delete "$veth" 2>/dev/null || true
     fi
 done
 
