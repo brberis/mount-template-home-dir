@@ -135,4 +135,4 @@ These scripts and documentation are provided as-is for HPC cluster administratio
 - **Head Node:** rocky9-e4s (10.1.1.162)
 - **Compute Nodes:** ac-9726-0-0 (10.1.1.241), ac-9726-0-1 (10.1.1.101)
 - **Status:** ✅ Operational
-- **Last Verified:** October 27, 2025
+- **Last Verified:** October 27, 2025# rocky-9-slurm-nis

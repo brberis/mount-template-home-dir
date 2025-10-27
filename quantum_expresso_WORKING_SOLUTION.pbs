@@ -1,0 +1,123 @@
+#!/bin/bash
+#PBS -N qe_scf
+#PBS -l nodes=2:ppn=48
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#PBS -o qe_scf.out
+
+# ================================================================================
+# WORKING SOLUTION for Multi-node MPI with Singularity/E4S
+# 
+# ISSUE: MPI inside container cannot easily SSH+launch containers on remote nodes
+# 
+# SOLUTION OPTIONS:
+#
+# Option 1 (RECOMMENDED - EASIEST): Use srun or pmix if available
+# Option 2: Use pdsh to pre-launch containers, then use shared memory MPI
+# Option 3: Install PMIx/Slurm for proper container-aware MPI launching  
+# Option 4: Use host MPI (if compatible with container MPI)
+#
+# Current Status:
+# ✅ Single-node execution works (48 cores)
+# ❌ Multi-node needs one of the solutions above
+# ================================================================================
+
+HEADNODE=$(hostname)
+echo "Job started on: $HEADNODE"
+export PATH=/usr/local/bin:$PATH
+
+# Define compute nodes and create nodefile
+ALLOWED_NODES=("ac-b7b8-1-0" "ac-b7b8-1-1")
+TMP_NODEFILE="$PBS_O_WORKDIR/my_nodefile"
+> "$TMP_NODEFILE"
+for node in "${ALLOWED_NODES[@]}"; do
+    for i in $(seq 1 48); do
+        echo "$node" >> "$TMP_NODEFILE"
+    done
+done
+
+TOTAL_CORES=$(wc -l < "$TMP_NODEFILE")
+echo "Total MPI ranks: $TOTAL_CORES"
+cat "$TMP_NODEFILE"
+
+# Setup directories
+USER_DIR=$(whoami)
+RUN_DIR="/mnt/nfs/$USER_DIR/qe_run"
+PSEUDO_DIR="$RUN_DIR/pseudo"
+mkdir -p "$PSEUDO_DIR" "$RUN_DIR/tmp"
+
+# Download pseudopotential
+PSEUDO_FILE="$PSEUDO_DIR/Si.pz-vbc.UPF"
+if [ ! -s "$PSEUDO_FILE" ] || ! grep -q "UPF" "$PSEUDO_FILE"; then
+    wget -q -O "$PSEUDO_FILE" https://pseudopotentials.quantum-espresso.org/upf_files/Si.pz-vbc.UPF
+fi
+
+# Create QE input
+cat > "$RUN_DIR/scf.in" <<EOF
+&control
+    calculation = 'scf'
+    prefix = 'silicon'
+    outdir = './tmp/'
+    pseudo_dir = '$PSEUDO_DIR'
+    verbosity = 'high'
+/
+&system
+    ibrav = 2, celldm(1) = 10.20, nat = 2, ntyp = 1
+    ecutwfc = 12.0
+/
+&electrons
+    mixing_beta = 0.7
+/
+ATOMIC_SPECIES
+ Si 28.086 Si.pz-vbc.UPF
+ATOMIC_POSITIONS (alat)
+ Si 0.00 0.00 0.00
+ Si 0.25 0.25 0.25
+K_POINTS automatic
+ 4 4 4 0 0 0
+EOF
+
+SIF_IMAGE="/mnt/nfs/containers/e4s-oneapi-x86_64-25.06.sif"
+
+# ================================================================================
+# WORKING: Single-node execution (48 cores)
+# ================================================================================
+echo "=========================================================================="
+echo "Running single-node QE calculation (48 cores)"
+echo "Container: $SIF_IMAGE"
+echo "=========================================================================="
+
+singularity exec --bind /mnt/nfs,/var/spool/torque "$SIF_IMAGE" bash <<'CONTAINER_SCRIPT'
+source /spack/share/spack/setup-env.sh
+spack load quantum-espresso@7.4.1
+export OMP_NUM_THREADS=1
+export I_MPI_HYDRA_RMK=user
+cd /mnt/nfs/svanteuser/qe_run
+mpirun -np 48 pw.x < scf.in > scf.out
+CONTAINER_SCRIPT
+
+if grep -q "JOB DONE" "$RUN_DIR/scf.out" 2>/dev/null; then
+    echo "=========================================================================="
+    echo "✅ SUCCESS: QE calculation completed"
+    echo "Output: $RUN_DIR/scf.out"
+    echo "=========================================================================="
+    tail -30 "$RUN_DIR/scf.out"
+else
+    echo "=========================================================================="
+    echo "❌ FAILED: Check $RUN_DIR/scf.out"
+    echo "=========================================================================="
+fi
+
+# ================================================================================
+# TODO: Multi-node execution 
+# ================================================================================
+echo ""
+echo "=========================================================================="
+echo "NOTE: For multi-node execution across 96 cores, you need:"
+echo "  1. PMIx-aware process manager (like Slurm's srun)"
+echo "  2. OR: Host MPI that can launch container processes"
+echo "  3. OR: Custom wrapper using pdsh/mpirun combination"
+echo ""  
+echo "Current PBS/Torque + SSH bootstrap has limitations with containers."
+echo "Consider upgrading to Slurm or implementing PMIx support."
+echo "=========================================================================="

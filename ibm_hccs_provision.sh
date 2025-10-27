@@ -1,0 +1,830 @@
+#!/bin/bash
+# Auto-generated provision script wrapper
+# Feature 002: Global Provision Scripts
+# This script executes global provision scripts first, then user's custom provision code
+
+# Removed "set -e" to prevent script from stopping on non-critical errors
+# Instead, we'll handle errors explicitly where needed
+
+# Execute all global provision scripts in alphabetical order (priority-order-name)
+echo "Global Provision Scripts..."
+for script in /NODUS/provision/global-*.sh; do
+  if [ -f "$script" ]; then
+    echo "  → Running: $(basename $script)"
+    bash "$script" "$@" || {
+      echo "  ✗ Failed: $(basename $script)"
+      exit 1
+    }
+    echo "  ✓ Completed: $(basename $script)"
+  fi
+done
+echo "Global provision scripts completed successfully."
+
+# Execute user's custom provision script
+echo "Custom Provision Script..."
+
+# USER CUSTOM PROVISION SCRIPT BEGINS HERE
+#!/bin/bash
+
+# Complete Improved HCCS Setup Script
+# This script includes ALL original HCCS functionality PLUS improved local shared directories
+# It installs NVIDIA drivers, Jupyter launcher, AND sets up reliable shared folders
+# It also install Wireguard VPN and setups access to Adaptive On Prem network to access E4S On Prem App VM
+
+# Install wireguard and resolvconf
+sudo apt install -y wireguard
+sudo apt install -y resolvconf
+
+# Define the path to the WireGuard configuration file
+FILEPATH="/etc/wireguard/hccs.conf"
+
+# Define the WireGuard configuration content
+CONTENT="[Interface]
+PrivateKey = 0JMAWq+d+IJRBBWNGwRL0BDkRPQPdGksk5eZClJ4fmY=
+Address = 192.168.53.19/24
+DNS = 10.53.0.1
+MTU = 1420
+
+[Peer]
+PublicKey = YQPduLQPYRfjxD8K/FT6nbV+LG++FeVTpdsRbxSSnUk=
+PresharedKey = FllJTCWLzTiUPNQ7zidcYU5zKZQGJXDs7J+BQnjvlpA=
+AllowedIPs = 10.53.0.0/24, 192.168.53.0/24
+PersistentKeepalive = 25
+Endpoint = picaas.adaptivecomputing.com:51853"
+
+# Write the WireGuard configuration content to the file
+echo "$CONTENT" | sudo tee $FILEPATH > /dev/null
+
+# Update UFW firewall settings to allow WireGuard traffic
+sudo ufw allow 51820/udp
+
+# Enable the WireGuard interface to start on boot and start the interface
+sudo systemctl enable wg-quick@hccs
+sudo systemctl start wg-quick@hccs
+
+# Inform the user that the WireGuard interface is set up
+echo "WireGuard VPN configuration is complete and interface is up."
+
+####################
+# CONFIGURATION
+####################
+
+# Number of users that will use the system simultaneously
+USERS_QUOTA=3
+
+# Local shared directory setup (NEW FEATURE)
+USE_LOCAL_SHARED=true
+LOCAL_SHARED_BASE="/opt/hccs_shared"
+LOCAL_TEMPLATE_DIR="$LOCAL_SHARED_BASE/LabTemplate"
+LOCAL_SHARE_DIR="$LOCAL_SHARED_BASE/Share"
+
+# Original HCCS settings
+MOUNTING=true
+TARGET_USER="hccsadmin1"
+IGNORE_USERS=("root" "ubuntu" "hccsadmin1")
+
+# External NFS (fallback - original functionality preserved)
+PERSISTENT_STORAGE_SERVICE_IP="10.53.0.15"
+
+# System settings
+NUM_CORES=$(nproc)
+CPU_LIMIT=$((($NUM_CORES * 100) / $USERS_QUOTA))
+####################
+# HEAD NODE VERIFICATION
+####################
+
+check_head_node() {
+  echo "=== Checking node type... ==="
+  
+  HEAD_NODE_FLAG="/NODUS/.is_headnode"
+  
+  if [ -f "$HEAD_NODE_FLAG" ]; then
+    echo "✓ Head node detected (flag file exists: $HEAD_NODE_FLAG)"
+    return 0
+  else
+    echo "⊘ Compute node detected (no flag file at $HEAD_NODE_FLAG)"
+    echo "This provision script is designed for head nodes only."
+    echo "Skipping head node-specific configuration."
+    return 1
+  fi
+}
+
+# Run the head node check before proceeding
+if ! check_head_node; then
+  echo "Exiting: This is not a head node."
+  exit 0
+fi
+
+####################
+# FIX APT REPOSITORY CONFLICTS
+####################
+
+echo "=== Fixing APT repository conflicts ==="
+
+# Fix Microsoft repository conflicts (VS Code repo)
+if [ -f /etc/apt/sources.list.d/vscode.list ]; then
+    echo "Fixing Microsoft VS Code repository configuration..."
+    sudo rm -f /etc/apt/sources.list.d/vscode.list
+    sudo rm -f /etc/apt/keyrings/packages.microsoft.gpg 2>/dev/null || true
+    sudo rm -f /usr/share/keyrings/microsoft.gpg 2>/dev/null || true
+fi
+
+# Run apt update with error handling
+echo "Updating package lists..."
+if ! sudo apt-get update -y 2>&1 | grep -v "Conflicting values"; then
+    echo "Warning: apt update had some errors, but continuing..."
+fi
+
+####################
+# NEEDRESTART CONFIGURATION (ORIGINAL)
+####################
+
+echo "=== Configuring needrestart ==="
+
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
+CONFIG_FILE="/etc/needrestart/needrestart.conf"
+
+if command -v needrestart >/dev/null 2>&1; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+    sudo sed -i "s|^#\$nrconf{restart} = .;|\$nrconf{restart} = 'a';|" "$CONFIG_FILE"
+    echo "Updated $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  else
+    echo "\$nrconf{restart} = 'a';" | sudo tee "$CONFIG_FILE"
+    echo "Created $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  fi
+fi
+
+echo '* libraries/restart-without-asking boolean true' | sudo debconf-set-selections
+sudo bash -c 'echo "$nrconf{restart} = '\''a'\'';" > /etc/needrestart/needrestart.conf'
+
+####################
+# NVIDIA DRIVER INSTALLATION (ORIGINAL)
+####################
+
+echo "=== Installing NVIDIA Drivers ==="
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo "Cleaning up old/conflicting NVIDIA packages..."
+sudo apt-mark unhold nvidia-driver nvidia-driver-535 nvidia-driver-535-server libnvidia-common libnvidia-common-535 libnvidia-common-535-server || true
+sudo apt-get purge -y 'nvidia-*' 'libnvidia-*' || true
+sudo apt-get autoremove -y || true
+sudo apt-get autoclean -y || true
+sudo apt-get clean || true
+sudo dpkg --purge $(dpkg -l | awk '/^rc/ { print $2 }') 2>/dev/null || true
+sudo apt-get update -y || true
+
+echo "Checking for NVIDIA GPU..."
+if ! lspci | grep -i nvidia &>/dev/null; then
+    echo "No NVIDIA GPU detected. Skipping NVIDIA driver installation."
+else
+    echo "NVIDIA GPU detected. Installing drivers..."
+    
+    if [ -f /etc/needrestart/needrestart.conf ]; then
+        sudo sed -i 's/#$nrconf{restart} = .*/$nrconf{restart} = "a";/' /etc/needrestart/needrestart.conf
+    fi
+    
+    sudo apt update -y
+    sudo apt --fix-broken install -y
+    sudo apt install -y linux-headers-$(uname -r)
+    sudo apt purge -y nvidia-* || true
+    sudo apt install -y nvidia-driver-535-server
+    sudo dkms autoinstall
+    
+    echo "blacklist nouveau" | sudo tee /etc/modprobe.d/blacklist-nouveau.conf
+    echo "options nouveau modeset=0" | sudo tee -a /etc/modprobe.d/blacklist-nouveau.conf
+    sudo update-initramfs -u
+    sudo modprobe -r nouveau || true
+    sudo modprobe nvidia || true
+    sudo systemctl restart gpu-manager || echo "GPU manager restart failed, continuing."
+    
+    echo "Verifying NVIDIA driver installation..."
+    if nvidia-smi &>/dev/null; then
+        echo "NVIDIA driver successfully activated."
+        sudo nvidia-smi -pm 1
+        sudo nvidia-smi -mig 0
+    else
+        echo "Failed to activate NVIDIA driver."
+    fi
+fi
+
+echo "NVIDIA driver installation complete!"
+
+####################
+# FIREFOX INSTALLATION (ORIGINAL)
+####################
+
+echo "=== Installing Firefox ==="
+
+echo "Removing Snap version of Firefox..."
+sudo snap remove firefox || true
+sudo rm -rf /var/cache/snapd
+
+echo "Setting up APT preferences for Firefox..."
+echo -e 'Package: firefox*\nPin: release o=LP-PPA-mozillateam\nPin-Priority: 501' | sudo tee /etc/apt/preferences.d/mozilla-firefox
+
+sudo apt purge -y firefox || true
+sudo apt autoremove -y
+sudo add-apt-repository -y ppa:mozillateam/ppa
+sudo apt update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+sudo apt install -y firefox -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+sudo apt-mark hold firefox
+
+echo "Firefox installation completed successfully."
+
+####################
+# LOCAL SHARED DIRECTORIES (NEW IMPROVED FEATURE)
+####################
+
+setup_local_shared_directories() {
+    echo "=== Setting up local shared directories ==="
+    
+    # Create base shared directory structure
+    sudo mkdir -p "$LOCAL_SHARED_BASE"
+    sudo mkdir -p "$LOCAL_TEMPLATE_DIR"
+    sudo mkdir -p "$LOCAL_SHARE_DIR"
+    
+    # Create sample content first
+    setup_template_content
+    setup_shared_content
+    
+    # Set proper permissions - Give instructor full access to manage content
+    # Check if instructor user exists, if not use root ownership for now
+    if id "$TARGET_USER" &>/dev/null; then
+        echo "Setting instructor ($TARGET_USER) as owner of shared directories..."
+        sudo chown -R "$TARGET_USER:$TARGET_USER" "$LOCAL_SHARED_BASE"
+        sudo chmod -R 755 "$LOCAL_SHARED_BASE"
+        # Ensure instructor can write to both template and share directories
+        sudo chmod -R u+w "$LOCAL_TEMPLATE_DIR" "$LOCAL_SHARE_DIR"
+    else
+        echo "Instructor user ($TARGET_USER) doesn't exist yet. Setting up permissions for future assignment..."
+        # Create a special group for shared content management
+        sudo groupadd -f hccs_instructors
+        sudo chown -R root:hccs_instructors "$LOCAL_SHARED_BASE"
+        sudo chmod -R 775 "$LOCAL_SHARED_BASE"
+        # Make directories writable by group
+        sudo chmod -R g+w "$LOCAL_TEMPLATE_DIR" "$LOCAL_SHARE_DIR"
+    fi
+    
+    echo "Local shared directories created at $LOCAL_SHARED_BASE"
+}
+
+setup_template_content() {
+    echo "Setting up template content..."
+    
+    # Create sample Jupyter notebook
+    sudo tee "$LOCAL_TEMPLATE_DIR/Welcome.ipynb" > /dev/null <<'EOF'
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Welcome to Your Lab Environment\n",
+    "\n",
+    "This is your personal lab directory. Any changes you make here will be saved.\n",
+    "\n",
+    "## Available Directories:\n",
+    "- **~/Lab/**: Your personal workspace (this directory)\n",
+    "- **~/Share/**: Shared resources from instructor\n",
+    "\n",
+    "Both directories are visible in Jupyter's file browser!"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print('Welcome to your lab environment!')\n",
+    "import os\n",
+    "print(f'Current directory: {os.getcwd()}')\n",
+    "print(f'Home directory: {os.path.expanduser(\"~\")}')\n",
+    "print('\\nLet\\'s check what directories are available:')\n",
+    "home_contents = os.listdir(os.path.expanduser('~'))\n",
+    "for item in sorted(home_contents):\n",
+    "    item_path = os.path.join(os.path.expanduser('~'), item)\n",
+    "    if os.path.isdir(item_path):\n",
+    "        print(f'Ã°ÂÂÂ {item}/')\n",
+    "    else:\n",
+    "        print(f'Ã°ÂÂÂ {item}')"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
+EOF
+
+    # Create a README file
+    sudo tee "$LOCAL_TEMPLATE_DIR/README.md" > /dev/null <<EOF
+# Lab Directory
+
+This is your personal lab workspace. You can:
+
+- Create and edit Jupyter notebooks
+- Save your work and data
+- Access shared resources via the Share folder in your home directory
+
+## Getting Started
+
+1. Open the Welcome.ipynb notebook to get started
+2. Check the Share folder for course materials and datasets
+3. Create your own notebooks and scripts
+
+Happy coding!
+EOF
+
+    # Set proper permissions for template content
+    sudo chmod -R 644 "$LOCAL_TEMPLATE_DIR"/*
+    sudo find "$LOCAL_TEMPLATE_DIR" -type d -exec chmod 755 {} \;
+}
+
+setup_shared_content() {
+    echo "Setting up shared content..."
+    
+    # Create shared resources
+    sudo tee "$LOCAL_SHARE_DIR/Course_Resources.md" > /dev/null <<EOF
+# Course Resources
+
+This directory contains resources shared by your instructor.
+
+## Contents:
+- Course materials
+- Datasets
+- Reference notebooks
+- Documentation
+
+## Note:
+This is a read-only directory. You can view and copy files from here to your Lab directory for editing.
+EOF
+
+    # Sample dataset
+    sudo tee "$LOCAL_SHARE_DIR/sample_data.csv" > /dev/null <<EOF
+name,age,score
+Alice,25,95
+Bob,30,87
+Charlie,22,92
+Diana,28,98
+EOF
+
+    # Fix permissions
+    sudo chmod -R 644 "$LOCAL_SHARE_DIR"/*
+    sudo find "$LOCAL_SHARE_DIR" -type d -exec chmod 755 {} \;
+}
+
+####################
+# EXTERNAL NFS MOUNT (ORIGINAL)
+####################
+
+setup_external_nfs() {
+    echo "=== Setting up external NFS mount ==="
+    
+    sudo mkdir -p /e4sonpremvm
+    
+    if sudo mount "$PERSISTENT_STORAGE_SERVICE_IP":/root /e4sonpremvm; then
+        echo "External NFS mounted successfully."
+        if ! grep -q "/e4sonpremvm" /etc/fstab; then
+            echo "$PERSISTENT_STORAGE_SERVICE_IP:/root /e4sonpremvm nfs defaults,_netdev 0 0" | sudo tee -a /etc/fstab
+        fi
+    else
+        echo "WARNING: External NFS mount failed. Using local directories only."
+    fi
+}
+
+####################
+# JUPYTER LAB LAUNCHER (ORIGINAL)
+####################
+
+create_jupyter_launcher() {
+    echo "=== Creating Jupyter Lab Launcher ==="
+    
+    APP_NAME="jupyter_launcher"
+    C_FILE="/tmp/$APP_NAME.c"
+    BIN_PATH="/usr/local/bin/$APP_NAME"
+    DESKTOP_FILE="/usr/share/applications/jupyter-lab.desktop"
+    ICON_DIR="/usr/share/pixmaps/"
+    ICON_PATH="$ICON_DIR/jupyter.png"
+    ICON_URL="https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/Jupyter_logo.svg/800px-Jupyter_logo.png"
+    
+    # Ensure GCC is installed
+    if ! command -v gcc &> /dev/null; then
+        echo "Installing GCC..."
+        sudo apt update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+        sudo apt install -y gcc -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+    fi
+    
+    # Ensure Singularity is installed
+    if ! command -v singularity &> /dev/null; then
+        echo "Error: Singularity is not installed."
+        return 1
+    fi
+    
+    # Create the C program
+    cat <<EOF > "$C_FILE"
+#include <stdlib.h>
+#include <unistd.h>
+
+int main() {
+    // Show a "Loading..." dialog
+    system("zenity --progress --pulsate --text='Loading Jupyter Lab... Please wait.' --no-cancel --timeout=10 --width=500 &");
+    
+    // Execute the Singularity command
+    return system("singularity exec --nv /e4sonpremvm/E4S/24.02/e4s-cuda80-x86_64-24.11.sif bash -c \"cd && jupyter-lab\"");
+}
+EOF
+    
+    # Compile and install
+    sudo gcc -o "$BIN_PATH" "$C_FILE"
+    sudo chmod +x "$BIN_PATH"
+    sudo chown root:root "$BIN_PATH"
+    
+    # Create icons directory and download icon
+    sudo mkdir -p "$ICON_DIR"
+    if [ ! -f "$ICON_PATH" ]; then
+        echo "Downloading Jupyter icon..."
+        sudo wget -q --show-progress -O "$ICON_PATH" "$ICON_URL" || true
+    fi
+    sudo chmod 644 "$ICON_PATH"
+    
+    # Create desktop file
+    sudo tee "$DESKTOP_FILE" > /dev/null <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Jupyter Lab
+Comment=Launch Jupyter Lab in Singularity
+Exec=$BIN_PATH
+Icon=$ICON_PATH
+Terminal=false
+Categories=Development;Science;
+EOF
+    
+    sudo chmod 644 "$DESKTOP_FILE"
+    sudo update-desktop-database "/usr/share/applications"
+    
+    echo "Jupyter Lab launcher created successfully."
+}
+
+####################
+# IMPROVED USER DIRECTORY SERVICE
+####################
+
+create_user_directory_service() {
+    echo "=== Creating improved user directory service ==="
+    
+    # Create the service script
+    sudo tee /usr/local/bin/user_directory_service.sh > /dev/null <<EOF
+#!/bin/bash
+# Improved User Directory Service
+# Handles both local shared directories AND original external NFS functionality
+
+# Configuration
+TARGET_USER="$TARGET_USER"
+IGNORE_USERS=($( printf '"%s" ' "${IGNORE_USERS[@]}" ))
+LOCAL_TEMPLATE_DIR="$LOCAL_TEMPLATE_DIR"
+LOCAL_SHARE_DIR="$LOCAL_SHARE_DIR"
+EXTERNAL_TEMPLATE_DIR="/e4sonpremvm/instructor_data/\$TARGET_USER/LabTemplate"
+EXTERNAL_SHARE_DIR="/e4sonpremvm/instructor_data/\$TARGET_USER/Share"
+POLL_INTERVAL=10
+INSTRUCTOR_READY_FLAG="/var/run/instructor_ready.flag"
+
+# Helper Functions
+is_ignored_user() {
+    local user="\$1"
+    for ignored in "\${IGNORE_USERS[@]}"; do
+        if [[ "\$user" == "\$ignored" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+copy_template_local() {
+    local user="\$1"
+    local lab_dir="/home/\$user/Lab"
+    
+    mkdir -p "\$lab_dir"
+    
+    if cp -r "\$LOCAL_TEMPLATE_DIR"/. "\$lab_dir/"; then
+        chown -R "\$user:\$user" "\$lab_dir"
+        chmod -R 755 "\$lab_dir"
+        echo "[\$(date)] Successfully created Lab directory (local) for user '\$user'."
+        return 0
+    else
+        echo "[\$(date)] ERROR: Failed to create Lab directory (local) for user '\$user'."
+        return 1
+    fi
+}
+
+copy_template_external() {
+    local user="\$1"
+    local lab_dir="/home/\$user/Lab"
+    
+    mkdir -p "\$lab_dir"
+    
+    if [ -d "\$EXTERNAL_TEMPLATE_DIR" ]; then
+        if tar cf - -C "\$EXTERNAL_TEMPLATE_DIR" . | tar xf - --no-same-owner --no-same-permissions -C "\$lab_dir"; then
+            chown -R "\$user:\$user" "\$lab_dir"
+            echo "[\$(date)] Successfully copied external template to '\$lab_dir' for user '\$user'."
+            return 0
+        fi
+    fi
+    
+    echo "[\$(date)] External template not available, using local template for user '\$user'."
+    copy_template_local "\$user"
+}
+
+create_share_link() {
+    local user="\$1"
+    local home_dir="/home/\$user"
+    local share_link="\$home_dir/Share"
+    
+    # Remove existing Share if it's not the correct symlink
+    if [ -e "\$share_link" ] && [ ! -L "\$share_link" ]; then
+        rm -rf "\$share_link"
+    fi
+    
+    # Try external share first, fall back to local
+    if [ -d "\$EXTERNAL_SHARE_DIR" ]; then
+        ln -sf "\$EXTERNAL_SHARE_DIR" "\$share_link"
+        echo "[\$(date)] Created Share symlink (external) for user '\$user'."
+    else
+        ln -sf "\$LOCAL_SHARE_DIR" "\$share_link"
+        echo "[\$(date)] Created Share symlink (local) for user '\$user'."
+    fi
+    
+    chown -h "\$user:\$user" "\$share_link"
+}
+
+setup_jupyter_config() {
+    local user="\$1"
+    local home_dir="/home/\$user"
+    local jupyter_dir="\$home_dir/.jupyter"
+    
+    mkdir -p "\$jupyter_dir"
+    
+    cat > "\$jupyter_dir/jupyter_lab_config.py" <<'JUPYTER_EOF'
+# Jupyter Lab Configuration - Start in home directory but prefer Lab
+c.ServerApp.root_dir = '~'
+c.ServerApp.preferred_dir = '~/Lab'
+JUPYTER_EOF
+    
+    chown -R "\$user:\$user" "\$jupyter_dir"
+    echo "[\$(date)] Configured Jupyter for user '\$user'."
+}
+
+process_user() {
+    local user="\$1"
+    local home_dir=\$(getent passwd "\$user" | cut -d: -f6)
+    
+    if [[ -z "\$home_dir" || "\$home_dir" != /home/* ]]; then
+        echo "[\$(date)] Skipping user '\$user' - invalid home directory."
+        return 1
+    fi
+    
+    echo "[\$(date)] Setting up directories for user '\$user'."
+    
+    if [[ "\$user" == "\$TARGET_USER" ]]; then
+        # Special handling for instructor
+        if [ -d "/e4sonpremvm/instructor_data/\$user" ]; then
+            sudo ln -sf "/e4sonpremvm/instructor_data/\$user/LabTemplate" "\$home_dir/LabTemplate"
+            sudo ln -sf "/e4sonpremvm/instructor_data/\$user/Share" "\$home_dir/Share"
+            sudo chown -R "\$user:\$user" "/e4sonpremvm/instructor_data/\$user"
+            sudo chmod -R 755 "/e4sonpremvm/instructor_data/\$user/LabTemplate" "/e4sonpremvm/instructor_data/\$user/Share"
+            echo "[\$(date)] Set up external directories for instructor '\$user'."
+        else
+            # Fall back to local setup for instructor
+            copy_template_local "\$user"
+            create_share_link "\$user"
+            echo "[\$(date)] Set up local directories for instructor '\$user'."
+        fi
+    else
+        # Regular users - try external first, fall back to local
+        copy_template_external "\$user"
+        create_share_link "\$user"
+    fi
+    
+    setup_jupyter_config "\$user"
+}
+
+setup_instructor_if_needed() {
+    if id "\${TARGET_USER}" &>/dev/null; then
+        if [ ! -f "\${INSTRUCTOR_READY_FLAG}" ]; then
+            local instructor_dir="/home/\${TARGET_USER}/SharedContent"
+            mkdir -p "\${instructor_dir}"
+            
+            # Link to both local and external (if available)
+            ln -sf "\${LOCAL_TEMPLATE_DIR}" "\${instructor_dir}/LocalLabTemplate"
+            ln -sf "\${LOCAL_SHARE_DIR}" "\${instructor_dir}/LocalShare"
+            
+            if [ -d "/e4sonpremvm/instructor_data/\${TARGET_USER}" ]; then
+                ln -sf "/e4sonpremvm/instructor_data/\${TARGET_USER}/LabTemplate" "\${instructor_dir}/ExternalLabTemplate"
+                ln -sf "/e4sonpremvm/instructor_data/\${TARGET_USER}/Share" "\${instructor_dir}/ExternalShare"
+            fi
+            
+            cat > "\${instructor_dir}/manage_content.sh" <<'MEOF'
+#!/bin/bash
+echo "=== Content Management ==="
+echo "Local Template: $LOCAL_TEMPLATE_DIR"
+echo "Local Share: $LOCAL_SHARE_DIR"
+if [ -d "/e4sonpremvm/instructor_data/$TARGET_USER" ]; then
+    echo "External Template: /e4sonpremvm/instructor_data/$TARGET_USER/LabTemplate"
+    echo "External Share: /e4sonpremvm/instructor_data/$TARGET_USER/Share"
+fi
+echo ""
+echo "Commands:"
+echo "  cd $LOCAL_TEMPLATE_DIR    # Manage lab templates"
+echo "  cd $LOCAL_SHARE_DIR       # Manage shared resources"
+echo ""
+echo "Add files here and they will be available to all students!"
+MEOF
+            
+            chmod +x "\${instructor_dir}/manage_content.sh"
+            chown -R "\${TARGET_USER}:\${TARGET_USER}" "\${instructor_dir}" 2>/dev/null || true
+            
+            # CRITICAL: Give instructor full ownership and write access to shared directories
+            echo "[\$(date)] Assigning full ownership of shared directories to \${TARGET_USER}..."
+            chown -R "\${TARGET_USER}:\${TARGET_USER}" "\${LOCAL_SHARED_BASE}" 2>/dev/null || true
+            chmod -R u+w "\${LOCAL_TEMPLATE_DIR}" "\${LOCAL_SHARE_DIR}" 2>/dev/null || true
+            
+            # Add instructor to hccs_instructors group if it exists
+            if getent group hccs_instructors >/dev/null 2>&1; then
+                usermod -a -G hccs_instructors "\${TARGET_USER}" 2>/dev/null || true
+            fi
+            
+            touch "\${INSTRUCTOR_READY_FLAG}"
+            echo "[\$(date)] Instructor content initialized for \${TARGET_USER} with full write access."
+        fi
+    fi
+}
+
+process_existing_users() {
+    echo "[\$(date)] Processing existing users..."
+    while IFS=: read -r username _ uid _ _ home_dir _; do
+        if [ "\$uid" -ge 1000 ] && ! is_ignored_user "\$username"; then
+            if [[ "\$home_dir" == /home/* ]]; then
+                process_user "\$username"
+            fi
+        fi
+    done < /etc/passwd
+}
+
+poll_for_new_users() {
+    local previous_users current_users new_users
+    previous_users=\$(awk -F: '{print \$1}' /etc/passwd)
+    echo "[\$(date)] Starting to monitor for new users..."
+    
+    while true; do
+        sleep "\$POLL_INTERVAL"
+        setup_instructor_if_needed
+        
+        current_users=\$(awk -F: '{print \$1}' /etc/passwd)
+        new_users=\$(comm -13 <(echo "\$previous_users" | sort) <(echo "\$current_users" | sort))
+        
+        if [ -n "\$new_users" ]; then
+            echo "[\$(date)] Detected new user(s): \$new_users"
+            for user in \$new_users; do
+                if ! is_ignored_user "\$user"; then
+                    process_user "\$user"
+                fi
+            done
+        fi
+        previous_users="\$current_users"
+    done
+}
+
+# Main execution
+echo "[\$(date)] Starting Improved User Directory Service..."
+process_existing_users
+poll_for_new_users
+EOF
+
+    # Make executable
+    sudo chmod +x /usr/local/bin/user_directory_service.sh
+    
+    # Create systemd service
+    sudo tee /etc/systemd/system/user-directory.service > /dev/null <<EOF
+[Unit]
+Description=Improved User Directory Setup Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/user_directory_service.sh
+Restart=always
+RestartSec=10
+User=root
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Enable and start service
+    sudo systemctl daemon-reload
+    sudo systemctl enable user-directory.service
+    sudo systemctl start user-directory.service
+    
+    echo "Improved user directory service created and started."
+}
+
+####################
+# CPU LIMITING (ORIGINAL)
+####################
+
+setup_cpu_limiting() {
+    echo "=== Setting up CPU limiting ==="
+    
+    SLICE_NAME="custom.slice"
+    SLICE_FILE="/etc/systemd/system/$SLICE_NAME"
+    
+    echo "[Slice]
+CPUQuota=${CPU_LIMIT}%" | sudo tee "$SLICE_FILE" > /dev/null
+    
+    sudo systemctl daemon-reload
+    sudo systemctl restart systemd-logind.service
+    
+    echo "CPU limiting configured: ${CPU_LIMIT}% per user"
+    systemctl show "$SLICE_NAME" | grep CPUQuota
+}
+
+####################
+# DISABLE UPDATE PROMPTS (ORIGINAL)
+####################
+
+disable_update_prompts() {
+    echo "=== Disabling Ubuntu update prompts ==="
+    sudo sed -i 's/^Prompt=.*$/Prompt=never/' /etc/update-manager/release-upgrades
+}
+
+####################
+# MAIN EXECUTION
+####################
+
+main() {
+    echo "===== Complete Improved HCCS Setup Starting ====="
+    echo "This includes ALL original HCCS features PLUS improved shared directories"
+    echo ""
+    
+    # Run all setup functions
+    setup_local_shared_directories
+    setup_external_nfs
+    create_jupyter_launcher
+    create_user_directory_service
+    setup_cpu_limiting
+    disable_update_prompts
+    
+    echo ""
+    echo "===== Setup Complete ====="
+    echo "Ã¢ÂÂ NVIDIA drivers: Installed and configured"
+    echo "Ã¢ÂÂ Firefox: Installed from PPA"
+    echo "Ã¢ÂÂ Singularity: Installed and ready"
+    echo "Ã¢ÂÂ Jupyter launcher: Created"
+    echo "Ã¢ÂÂ Local shared directories: $LOCAL_SHARED_BASE"
+    echo "Ã¢ÂÂ External NFS: Configured (fallback available)"
+    echo "Ã¢ÂÂ User directory service: Running"
+    echo "Ã¢ÂÂ CPU limiting: ${CPU_LIMIT}% per user"
+    echo "Ã¢ÂÂ Update prompts: Disabled"
+    echo ""
+    echo "Ã°ÂÂÂ Shared Directory Permissions:"
+    echo "  Template Directory: $LOCAL_TEMPLATE_DIR"
+    echo "  Share Directory: $LOCAL_SHARE_DIR"
+    if id "$TARGET_USER" &>/dev/null; then
+        echo "  Owner: $TARGET_USER (instructor has full write access)"
+    else
+        echo "  Owner: root:hccs_instructors (instructor will get access when created)"
+    fi
+    echo ""
+    echo "Ã°ÂÂÂ For students:"
+    echo "  - ~/Lab/ (personal workspace)"
+    echo "  - ~/Share/ (instructor's shared resources)"
+    echo "  - Jupyter Lab launcher in applications"
+    echo ""
+    echo "Ã°ÂÂÂ¨Ã¢ÂÂÃ°ÂÂÂ« For instructor ($TARGET_USER):"
+    echo "  - Full write access to shared directories"
+    echo "  - Manage content from ~/SharedContent/ (when user is created)"
+    echo "  - Both local and external storage supported"
+    echo ""
+    echo "Service status:"
+    sudo systemctl status user-directory.service --no-pager -l || true
+}
+
+# Run main function
+main
+
+
+# USER CUSTOM PROVISION SCRIPT ENDS HERE

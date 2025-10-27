@@ -1,0 +1,201 @@
+#!/bin/bash
+#PBS -N qe_scf
+#PBS -l nodes=2:ppn=48
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#PBS -o qe_scf.out
+
+# -----------------------------
+# Force this script to run on the head node only
+# -----------------------------
+HEADNODE=$(hostname)
+echo "Job started on head node: $HEADNODE"
+
+# -----------------------------
+# Ensure PBS finds Singularity on head node
+# -----------------------------
+export PATH=/usr/local/bin:$PATH
+
+# -----------------------------
+# Define allowed compute nodes
+# -----------------------------
+ALLOWED_NODES=("ac-b7b8-1-0" "ac-b7b8-1-1")
+TMP_NODEFILE="$PBS_O_WORKDIR/my_nodefile"
+
+# Create machinefile manually (full cores per node)
+> "$TMP_NODEFILE"
+for node in "${ALLOWED_NODES[@]}"; do
+    for i in $(seq 1 48); do
+        echo "$node" >> "$TMP_NODEFILE"
+    done
+done
+
+TOTAL_CORES=$(wc -l < "$TMP_NODEFILE")
+echo "Total MPI ranks: $TOTAL_CORES"
+echo "Machinefile:"
+cat "$TMP_NODEFILE"
+
+# -----------------------------
+# Define working directories
+# -----------------------------
+USER_DIR=$(whoami)
+RUN_DIR="/mnt/nfs/$USER_DIR/qe_run"
+PSEUDO_DIR="$RUN_DIR/pseudo"
+mkdir -p "$PSEUDO_DIR"
+mkdir -p "$RUN_DIR/tmp"
+
+# -----------------------------
+# Download pseudopotential if missing
+# -----------------------------
+PSEUDO_FILE="$PSEUDO_DIR/Si.pz-vbc.UPF"
+if [ ! -s "$PSEUDO_FILE" ] || ! grep -q "UPF" "$PSEUDO_FILE"; then
+    echo "Downloading Si pseudopotential..."
+    wget -q -O "$PSEUDO_FILE" https://pseudopotentials.quantum-espresso.org/upf_files/Si.pz-vbc.UPF
+fi
+
+# -----------------------------
+# Create SCF input file
+# -----------------------------
+cat > "$RUN_DIR/scf.in" <<EOF
+&control
+    calculation = 'scf'
+    prefix = 'silicon'
+    outdir = './tmp/'
+    pseudo_dir = '$PSEUDO_DIR'
+    verbosity = 'high'
+/
+&system
+    ibrav = 2, celldm(1) = 10.20, nat = 2, ntyp = 1
+    ecutwfc = 12.0
+/
+&electrons
+    mixing_beta = 0.7
+/
+ATOMIC_SPECIES
+ Si 28.086 Si.pz-vbc.UPF
+ATOMIC_POSITIONS (alat)
+ Si 0.00 0.00 0.00
+ Si 0.25 0.25 0.25
+K_POINTS automatic
+ 4 4 4 0 0 0
+EOF
+
+# -----------------------------
+# Run QE with multi-node MPI using pre-launched containers
+# Pre-launch containers on all nodes, then use TCP for MPI
+# -----------------------------
+SIF_IMAGE="/mnt/nfs/containers/e4s-oneapi-x86_64-25.06.sif"
+echo "----------------------------------------------------------"
+echo "Multi-node MPI with pre-launched containers"
+echo "Container: $SIF_IMAGE"
+echo "Nodes: ${ALLOWED_NODES[@]}"
+echo "Total cores: $TOTAL_CORES"
+echo "----------------------------------------------------------"
+
+# Verify nodes
+echo "Verifying nodes..."
+for node in "${ALLOWED_NODES[@]}"; do
+    ssh $node "singularity exec --bind /mnt/nfs $SIF_IMAGE hostname" && echo "$node: OK"
+done
+
+# Single-node test first (PROVEN TO WORK)
+echo "----------------------------------------------------------"
+echo "Single-node test (48 cores) - BASELINE"
+echo "----------------------------------------------------------"
+singularity exec --bind /mnt/nfs "$SIF_IMAGE" bash <<'SINGLE_NODE'
+source /spack/share/spack/setup-env.sh
+spack load quantum-espresso@7.4.1
+export OMP_NUM_THREADS=1
+cd /mnt/nfs/svanteuser/qe_run
+# Unset PBS variables to prevent Intel MPI from trying to use PBS
+unset PBS_ENVIRONMENT PBS_JOBID PBS_NODEFILE PBS_NODENUM PBS_NUM_NODES PBS_O_WORKDIR
+# Use localhost explicitly
+mpirun -np 48 -host localhost:48 pw.x < scf.in > scf_single_node.out
+SINGLE_NODE
+
+grep -q "JOB DONE" "$RUN_DIR/scf_single_node.out" && echo "✅ Single-node: SUCCESS" || { echo "❌ Single-node: FAILED"; exit 1; }
+
+# Multi-node approach: Launch container-based MPI daemons on each node
+echo "----------------------------------------------------------"
+echo "Multi-node test (96 cores across 2 nodes)"
+echo "----------------------------------------------------------"
+
+# Create simple MPI run script that will execute inside container on each node
+cat > "$RUN_DIR/qe_mpi_run.sh" <<'QE_RUN'
+#!/bin/bash
+cd /mnt/nfs/svanteuser/qe_run
+source /spack/share/spack/setup-env.sh
+spack load quantum-espresso@7.4.1
+export OMP_NUM_THREADS=1
+# This script runs pw.x as an MPI rank
+exec pw.x
+QE_RUN
+chmod +x "$RUN_DIR/qe_mpi_run.sh"
+
+# Launch background container processes on all nodes that will accept MPI connections
+# These act as "MPI daemons" waiting for work
+for node in "${ALLOWED_NODES[@]}"; do
+    echo "Starting MPI-ready container on $node..."
+    ssh $node "cd /mnt/nfs/svanteuser/qe_run && singularity exec --bind /mnt/nfs $SIF_IMAGE bash -c 'source /spack/share/spack/setup-env.sh && spack load intel-oneapi-mpi && sleep 600' &" &
+done
+
+sleep 5  # Let containers initialize
+
+# Now run mpirun from head node targeting all nodes
+echo "Launching MPI job across all nodes..."
+singularity exec --bind /mnt/nfs "$SIF_IMAGE" bash <<MPIRUN_SCRIPT
+source /spack/share/spack/setup-env.sh
+spack load quantum-espresso@7.4.1
+export OMP_NUM_THREADS=1
+
+# Try using mpirun with explicit host list and TCP fabric
+export I_MPI_FABRICS=shm:tcp
+export I_MPI_HYDRA_BOOTSTRAP=rsh
+export I_MPI_HYDRA_BOOTSTRAP_EXEC=ssh
+export I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS="-o StrictHostKeyChecking=no"
+
+cd /mnt/nfs/svanteuser/qe_run
+
+# Build host argument: node1:48,node2:48
+HOSTS="${ALLOWED_NODES[0]}:48,${ALLOWED_NODES[1]}:48"
+
+# Run with explicit command wrapping for remote execution
+mpirun -np 96 -hosts \$HOSTS \\
+  -env SINGULARITY_BINDPATH=/mnt/nfs \\
+  bash -c "singularity exec --bind /mnt/nfs $SIF_IMAGE bash /mnt/nfs/svanteuser/qe_run/qe_mpi_run.sh" \\
+  < scf.in > scf.out 2>&1
+
+echo "MPI job completed"
+MPIRUN_SCRIPT
+
+# Check results
+if grep -q "JOB DONE" "$RUN_DIR/scf.out" 2>/dev/null; then
+    echo "=========================================================="
+    echo "✅ SUCCESS: Multi-node QE calculation completed!"
+    echo "Output: $RUN_DIR/scf.out"
+    echo "=========================================================="
+    tail -30 "$RUN_DIR/scf.out"
+else
+    echo "=========================================================="
+    echo "❌ Multi-node execution failed or incomplete"
+    echo "Check output files:"
+    echo "  - $RUN_DIR/scf.out"
+    echo "  - $RUN_DIR/scf_single_node.out (baseline)"
+    echo "=========================================================="
+    [ -f "$RUN_DIR/scf.out" ] && tail -50 "$RUN_DIR/scf.out"
+fi
+
+# -----------------------------
+# Check completion
+# -----------------------------
+if [ -f "$RUN_DIR/scf.out" ] && grep -q "JOB DONE." "$RUN_DIR/scf.out"; then
+    echo "=========================================================="
+    echo "QE SCF calculation finished successfully."
+    echo "=========================================================="
+else
+    echo "=========================================================="
+    echo "QE SCF run did not finish properly."
+    echo "Check: $RUN_DIR/scf.out"
+    echo "=========================================================="
+fi
+
