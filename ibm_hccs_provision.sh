@@ -31,9 +31,63 @@ echo "Custom Provision Script..."
 # It installs NVIDIA drivers, Jupyter launcher, AND sets up reliable shared folders
 # It also install Wireguard VPN and setups access to Adaptive On Prem network to access E4S On Prem App VM
 
-# Install wireguard and resolvconf
-sudo apt install -y wireguard
-sudo apt install -y resolvconf
+####################
+# CRITICAL: SET NON-INTERACTIVE MODE AND DISABLE NEEDRESTART (MUST BE FIRST!)
+####################
+
+echo "=== Configuring non-interactive mode ==="
+
+# Set environment variables for non-interactive mode
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
+# Configure needrestart to never prompt
+CONFIG_FILE="/etc/needrestart/needrestart.conf"
+if command -v needrestart >/dev/null 2>&1; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+    sudo sed -i "s|^#\$nrconf{restart} = .*|\$nrconf{restart} = 'a';|" "$CONFIG_FILE"
+    sudo sed -i "s|^\$nrconf{restart} = .*|\$nrconf{restart} = 'a';|" "$CONFIG_FILE"
+    echo "Updated $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  else
+    echo "\$nrconf{restart} = 'a';" | sudo tee "$CONFIG_FILE"
+    echo "Created $CONFIG_FILE to set \$nrconf{restart} = 'a';"
+  fi
+fi
+
+# Set debconf to never prompt
+echo '* libraries/restart-without-asking boolean true' | sudo debconf-set-selections
+sudo bash -c 'echo "$nrconf{restart} = '\''a'\'';" > /etc/needrestart/needrestart.conf'
+
+####################
+# FIX APT REPOSITORY CONFLICTS
+####################
+
+echo "=== Fixing APT repository conflicts ==="
+
+# Fix Microsoft repository conflicts (VS Code repo)
+if [ -f /etc/apt/sources.list.d/vscode.list ]; then
+    echo "Fixing Microsoft VS Code repository configuration..."
+    sudo rm -f /etc/apt/sources.list.d/vscode.list
+    sudo rm -f /etc/apt/keyrings/packages.microsoft.gpg 2>/dev/null || true
+    sudo rm -f /usr/share/keyrings/microsoft.gpg 2>/dev/null || true
+fi
+
+# Run apt update with error handling
+echo "Updating package lists..."
+if ! sudo apt-get update -y 2>&1 | grep -v "Conflicting values"; then
+    echo "Warning: apt update had some errors, but continuing..."
+fi
+
+####################
+# WIREGUARD VPN SETUP
+####################
+
+echo "=== Installing WireGuard VPN ==="
+
+# Install wireguard and resolvconf with non-interactive flags
+sudo DEBIAN_FRONTEND=noninteractive apt install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" wireguard
+sudo DEBIAN_FRONTEND=noninteractive apt install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" resolvconf
 
 # Define the path to the WireGuard configuration file
 FILEPATH="/etc/wireguard/hccs.conf"
@@ -116,52 +170,7 @@ if ! check_head_node; then
 fi
 
 ####################
-# FIX APT REPOSITORY CONFLICTS
-####################
-
-echo "=== Fixing APT repository conflicts ==="
-
-# Fix Microsoft repository conflicts (VS Code repo)
-if [ -f /etc/apt/sources.list.d/vscode.list ]; then
-    echo "Fixing Microsoft VS Code repository configuration..."
-    sudo rm -f /etc/apt/sources.list.d/vscode.list
-    sudo rm -f /etc/apt/keyrings/packages.microsoft.gpg 2>/dev/null || true
-    sudo rm -f /usr/share/keyrings/microsoft.gpg 2>/dev/null || true
-fi
-
-# Run apt update with error handling
-echo "Updating package lists..."
-if ! sudo apt-get update -y 2>&1 | grep -v "Conflicting values"; then
-    echo "Warning: apt update had some errors, but continuing..."
-fi
-
-####################
-# NEEDRESTART CONFIGURATION (ORIGINAL)
-####################
-
-echo "=== Configuring needrestart ==="
-
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-export NEEDRESTART_SUSPEND=1
-
-CONFIG_FILE="/etc/needrestart/needrestart.conf"
-
-if command -v needrestart >/dev/null 2>&1; then
-  if [[ -f "$CONFIG_FILE" ]]; then
-    sudo sed -i "s|^#\$nrconf{restart} = .;|\$nrconf{restart} = 'a';|" "$CONFIG_FILE"
-    echo "Updated $CONFIG_FILE to set \$nrconf{restart} = 'a';"
-  else
-    echo "\$nrconf{restart} = 'a';" | sudo tee "$CONFIG_FILE"
-    echo "Created $CONFIG_FILE to set \$nrconf{restart} = 'a';"
-  fi
-fi
-
-echo '* libraries/restart-without-asking boolean true' | sudo debconf-set-selections
-sudo bash -c 'echo "$nrconf{restart} = '\''a'\'';" > /etc/needrestart/needrestart.conf'
-
-####################
-# NVIDIA DRIVER INSTALLATION (ORIGINAL)
+# NVIDIA DRIVER INSTALLATION
 ####################
 
 echo "=== Installing NVIDIA Drivers ==="
@@ -198,16 +207,38 @@ else
     echo "options nouveau modeset=0" | sudo tee -a /etc/modprobe.d/blacklist-nouveau.conf
     sudo update-initramfs -u
     sudo modprobe -r nouveau || true
-    sudo modprobe nvidia || true
+    
+    echo "=== Reloading NVIDIA kernel modules (avoiding reboot) ==="
+    
+    # Stop services that might be using NVIDIA
+    sudo systemctl stop gdm3 2>/dev/null || true
+    sudo systemctl stop lightdm 2>/dev/null || true
+    sudo systemctl stop nvidia-persistenced 2>/dev/null || true
+    
+    # Kill any remaining processes using NVIDIA
+    sudo lsof /dev/nvidia* 2>/dev/null | awk 'NR>1 {print $2}' | xargs -r sudo kill -9 2>/dev/null || true
+    
+    # Unload all NVIDIA modules
+    sudo rmmod nvidia_drm 2>/dev/null || true
+    sudo rmmod nvidia_modeset 2>/dev/null || true
+    sudo rmmod nvidia_uvm 2>/dev/null || true
+    sudo rmmod nvidia 2>/dev/null || true
+    
+    # Load the new NVIDIA modules
+    sudo modprobe nvidia
+    sudo modprobe nvidia_modeset
+    sudo modprobe nvidia_drm
+    sudo modprobe nvidia_uvm
+    
     sudo systemctl restart gpu-manager || echo "GPU manager restart failed, continuing."
     
     echo "Verifying NVIDIA driver installation..."
     if nvidia-smi &>/dev/null; then
-        echo "NVIDIA driver successfully activated."
+        echo "✓ NVIDIA driver successfully activated (no reboot required)."
         sudo nvidia-smi -pm 1
         sudo nvidia-smi -mig 0
     else
-        echo "Failed to activate NVIDIA driver."
+        echo "✗ Failed to activate NVIDIA driver. A reboot may be required."
     fi
 fi
 
