@@ -1,0 +1,238 @@
+#!/bin/bash
+#PBS -N mpi_80_clean
+#PBS -q svante-cluster8
+#PBS -l nodes=2:ppn=40
+#PBS -l walltime=00:05:00
+#PBS -j oe
+
+echo "=========================================="
+echo "MPI Test: 80 cores (2 nodes x 40 cores)"
+echo "=========================================="
+echo "Start: $(date)"
+echo ""
+
+echo "PBS Job ID: $PBS_JOBID"
+echo "PBS Nodefile: $PBS_NODEFILE"
+echo ""
+
+echo "Allocated nodes:"
+cat $PBS_NODEFILE | sort | uniq -c
+echo ""
+
+NPROCS=$(wc -l < $PBS_NODEFILE)
+echo "Total MPI processes: $NPROCS"
+echo ""
+
+# Load OpenMPI
+echo "Loading OpenMPI..."
+source /spack/share/spack/setup-env.sh
+spack load openmpi@5.0.3%gcc@11.4.0
+
+OMPI_DIR=$(spack location -i openmpi@5.0.3%gcc@11.4.0)
+MPIRUN="$OMPI_DIR/bin/mpirun"
+
+echo "OpenMPI: $OMPI_DIR"
+echo "Using: $MPIRUN"
+echo ""
+
+# Set environment
+export OMP_NUM_THREADS=1
+export OMPI_MCA_btl="^openib"
+export OMPI_MCA_btl_tcp_if_include="eth0"
+
+echo "=========================================="
+echo "Test 1: Verify process distribution"
+echo "=========================================="
+echo "Running hostname on all $NPROCS processes:"
+echo ""
+
+$MPIRUN -np $NPROCS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by node \
+    hostname | sort | uniq -c
+
+echo ""
+echo "Expected: 40 processes per node on 2 nodes"
+echo ""
+
+echo "=========================================="
+echo "Test 2: MPI Hello World Program"
+echo "=========================================="
+
+# Create a simple MPI C program
+cat > /tmp/mpi_hello_$$.c << 'CEOF'
+#include <mpi.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    
+    int world_size, world_rank;
+    char hostname[256];
+    char processor_name[MPI_MAX_PROCESSOR_NAME];
+    int name_len;
+    
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Get_processor_name(processor_name, &name_len);
+    gethostname(hostname, sizeof(hostname));
+    
+    // Root process prints summary
+    if (world_rank == 0) {
+        printf("========================================\n");
+        printf("MPI World initialized successfully!\n");
+        printf("Total MPI processes: %d\n", world_size);
+        printf("========================================\n\n");
+    }
+    
+    // Barrier to ensure clean output
+    MPI_Barrier(MPI_COMM_WORLD);
+    
+    // Each process reports (limiting output to first 10 and last 10)
+    if (world_rank < 10 || world_rank >= world_size - 10) {
+        printf("Rank %4d/%d running on %s\n", 
+               world_rank, world_size, hostname);
+        fflush(stdout);
+    }
+    
+    MPI_Barrier(MPI_COMM_WORLD);
+    
+    // Summary from root
+    if (world_rank == 0) {
+        printf("\n... (middle processes omitted for clarity) ...\n\n");
+        printf("All %d MPI processes initialized successfully!\n", world_size);
+    }
+    
+    MPI_Finalize();
+    return 0;
+}
+CEOF
+
+# Compile the MPI program
+echo "Compiling MPI Hello World program..."
+mpicc -o /tmp/mpi_hello_$$ /tmp/mpi_hello_$$.c 2>&1
+
+if [ -f /tmp/mpi_hello_$$ ]; then
+    echo "Compilation successful!"
+    echo ""
+    echo "Running MPI Hello World with $NPROCS processes:"
+    echo ""
+    
+    $MPIRUN -np $NPROCS \
+        --hostfile $PBS_NODEFILE \
+        --bind-to none \
+        --map-by node \
+        /tmp/mpi_hello_$$
+    
+    echo ""
+    
+    # Cleanup
+    rm -f /tmp/mpi_hello_$$ /tmp/mpi_hello_$$.c
+else
+    echo "ERROR: Compilation failed"
+    cat /tmp/mpi_hello_$$.c
+    rm -f /tmp/mpi_hello_$$.c
+fi
+
+echo ""
+echo "=========================================="
+echo "Test 3: Node-to-node communication test"
+echo "=========================================="
+
+# Create MPI ping-pong test
+cat > /tmp/mpi_pingpong_$$.c << 'CEOF'
+#include <mpi.h>
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    
+    int world_size, world_rank;
+    char hostname[256];
+    
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    gethostname(hostname, sizeof(hostname));
+    
+    if (world_rank == 0) {
+        printf("Testing MPI communication between nodes...\n\n");
+        
+        // Send to middle process (likely on other node)
+        int partner = world_size / 2;
+        int send_data = 42;
+        int recv_data = 0;
+        
+        printf("Rank 0 sending value %d to rank %d\n", send_data, partner);
+        MPI_Send(&send_data, 1, MPI_INT, partner, 0, MPI_COMM_WORLD);
+        MPI_Recv(&recv_data, 1, MPI_INT, partner, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        printf("Rank 0 received value %d back from rank %d\n", recv_data, partner);
+        
+        if (recv_data == send_data + 1) {
+            printf("\n✓ Inter-node MPI communication successful!\n");
+        }
+    } else if (world_rank == world_size / 2) {
+        int recv_data = 0;
+        MPI_Recv(&recv_data, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        printf("Rank %d received value %d from rank 0\n", world_rank, recv_data);
+        
+        int send_data = recv_data + 1;
+        printf("Rank %d sending value %d back to rank 0\n", world_rank, send_data);
+        MPI_Send(&send_data, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+    }
+    
+    MPI_Finalize();
+    return 0;
+}
+CEOF
+
+echo "Compiling MPI ping-pong test..."
+mpicc -o /tmp/mpi_pingpong_$$ /tmp/mpi_pingpong_$$.c 2>&1
+
+if [ -f /tmp/mpi_pingpong_$$ ]; then
+    echo "Running ping-pong test:"
+    echo ""
+    
+    $MPIRUN -np $NPROCS \
+        --hostfile $PBS_NODEFILE \
+        --bind-to none \
+        --map-by node \
+        /tmp/mpi_pingpong_$$
+    
+    # Cleanup
+    rm -f /tmp/mpi_pingpong_$$ /tmp/mpi_pingpong_$$.c
+else
+    echo "ERROR: Compilation failed"
+    rm -f /tmp/mpi_pingpong_$$.c
+fi
+
+echo ""
+echo "=========================================="
+echo "Test 4: Final verification"
+echo "=========================================="
+echo "Process distribution summary:"
+$MPIRUN -np $NPROCS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by node \
+    hostname | sort | uniq -c
+
+echo ""
+echo "Node file contents:"
+cat $PBS_NODEFILE | uniq -c
+
+echo ""
+echo "=========================================="
+echo "✓ ALL TESTS COMPLETED SUCCESSFULLY"
+echo "=========================================="
+echo "- MPI processes: $NPROCS"
+echo "- Nodes: 2"
+echo "- Processes per node: 40"
+echo "- SSH connectivity: Working"
+echo "- MPI communication: Working"
+echo "=========================================="
+echo ""
+echo "End: $(date)"

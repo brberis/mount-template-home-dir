@@ -1,0 +1,98 @@
+#!/bin/bash
+#PBS -N qe_24cores
+#PBS -q svante-cluster8
+#PBS -l nodes=1:ppn=24
+#PBS -l walltime=00:05:00
+#PBS -j oe
+#PBS -o qe_24cores.out
+
+echo "=== START: $(date -u) ==="
+echo "PBS_NODEFILE: $PBS_NODEFILE"
+echo "NODES: $(uniq $PBS_NODEFILE)"
+
+# Calculate number of ranks from nodefile
+NRANKS=$(wc -l < $PBS_NODEFILE)
+echo "TOTAL RANKS: $NRANKS"
+
+# Load Spack and packages
+source /spack/share/spack/setup-env.sh
+spack load openmpi@5.0.3%gcc@11.4.0
+spack load quantum-espresso@7.3.1%gcc@11.4.0
+
+OMPI_DIR=$(spack location -i openmpi@5.0.3%gcc@11.4.0)
+QE_DIR=$(spack location -i quantum-espresso@7.3.1%gcc@11.4.0)
+MPIEXEC="$OMPI_DIR/bin/mpiexec"
+PWX="$QE_DIR/bin/pw.x"
+
+echo "USING MPIEXEC: $MPIEXEC"
+echo "USING PW.X: $PWX"
+echo "Number of MPI ranks: $NRANKS"
+
+export OMP_NUM_THREADS=1
+export OMPI_MCA_btl="^openib"
+export OMPI_MCA_btl_tcp_if_include="eth0"
+unset OMPI_MCA_pml
+
+RUN_DIR="/mnt/nfs/svanteuser/qe_run"
+mkdir -p "$RUN_DIR/pseudo" "$RUN_DIR/tmp"
+cd "$RUN_DIR"
+
+[ ! -f "$RUN_DIR/pseudo/Si.pz-vbc.UPF" ] && \
+    wget -q -O "$RUN_DIR/pseudo/Si.pz-vbc.UPF" \
+    https://pseudopotentials.quantum-espresso.org/upf_files/Si.pz-vbc.UPF
+
+cat > "$RUN_DIR/scf.in" <<'INPUT'
+&control
+    calculation = 'scf'
+    prefix = 'silicon'
+    outdir = './tmp/'
+    pseudo_dir = './pseudo'
+/
+&system
+    ibrav = 2, celldm(1) = 10.20, nat = 2, ntyp = 1
+    ecutwfc = 12.0
+/
+&electrons
+/
+ATOMIC_SPECIES
+ Si 28.086 Si.pz-vbc.UPF
+ATOMIC_POSITIONS (alat)
+ Si 0.00 0.00 0.00
+ Si 0.25 0.25 0.25
+K_POINTS automatic
+ 6 6 6 0 0 0
+INPUT
+
+echo "=== Starting Quantum ESPRESSO ==="
+"$MPIEXEC" \
+    -np $NRANKS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by node:PE=1 \
+    -x PATH \
+    -x LD_LIBRARY_PATH \
+    -x OMP_NUM_THREADS \
+    "$PWX" -npool 2 -in scf.in > scf.out 2> scf.err < /dev/null
+
+echo "=== END: $(date -u) ==="
+echo ""
+if grep -q "JOB DONE" scf.out 2>/dev/null; then
+    echo "=========================================="
+    echo "SUCCESS: 24 CORES!"
+    echo "=========================================="
+    tail -30 scf.out
+else
+    echo "=========================================="
+    echo "FAILED - Checking errors..."
+    echo "=========================================="
+    if [ -s scf.err ]; then
+        echo "=== STDERR ==="
+        cat scf.err
+    fi
+    if [ -s scf.out ]; then
+        echo "=== Last 30 lines of STDOUT ==="
+        tail -30 scf.out
+    else
+        echo "No output file generated"
+    fi
+fi

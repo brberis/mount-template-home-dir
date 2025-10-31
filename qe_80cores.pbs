@@ -1,0 +1,181 @@
+#!/bin/bash
+#PBS -N qe_80cores
+#PBS -q svante-cluster8
+#PBS -l nodes=2:ppn=40
+#PBS -l walltime=00:10:00
+#PBS -j oe
+#PBS -o qe_80cores.out
+
+echo "=== JOB START: $(date -u) ==="
+echo "Job ID: $PBS_JOBID"
+echo "PBS_NODEFILE: $PBS_NODEFILE"
+echo "Allocated nodes:"
+cat $PBS_NODEFILE | sort | uniq -c
+echo ""
+
+# Calculate number of MPI processes
+NPROCS=$(wc -l < $PBS_NODEFILE)
+echo "Total MPI processes: $NPROCS"
+echo ""
+
+# Load Spack environment and packages
+echo "Loading Spack packages..."
+source /spack/share/spack/setup-env.sh
+spack load openmpi@5.0.3%gcc@11.4.0
+spack load quantum-espresso@7.3.1%gcc@11.4.0
+
+# Get paths to executables
+OMPI_DIR=$(spack location -i openmpi@5.0.3%gcc@11.4.0)
+QE_DIR=$(spack location -i quantum-espresso@7.3.1%gcc@11.4.0)
+MPIRUN="$OMPI_DIR/bin/mpirun"
+PWX="$QE_DIR/bin/pw.x"
+
+echo "OpenMPI directory: $OMPI_DIR"
+echo "Quantum ESPRESSO directory: $QE_DIR"
+echo "Using mpirun: $MPIRUN"
+echo "Using pw.x: $PWX"
+echo ""
+
+# Set OpenMPI environment variables
+export OMP_NUM_THREADS=1
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close
+export OMPI_MCA_btl="^openib"
+export OMPI_MCA_btl_tcp_if_include="eth0"
+export OMPI_MCA_hwloc_base_binding_policy=none
+export OMPI_MCA_rmaps_base_oversubscribe=0
+export I_MPI_PIN=0
+export I_MPI_FABRICS=shm:tcp
+
+# Prepare working directory
+RUN_DIR="/mnt/nfs/svanteuser/qe_run_80"
+mkdir -p "$RUN_DIR/pseudo" "$RUN_DIR/tmp"
+cd "$RUN_DIR"
+echo "Working directory: $RUN_DIR"
+echo ""
+
+# Download pseudopotential if not present
+if [ ! -f "$RUN_DIR/pseudo/Si.pz-vbc.UPF" ]; then
+    echo "Downloading Si pseudopotential..."
+    wget -q -O "$RUN_DIR/pseudo/Si.pz-vbc.UPF" \
+        https://pseudopotentials.quantum-espresso.org/upf_files/Si.pz-vbc.UPF
+    echo "Pseudopotential downloaded"
+fi
+
+# Create QE input file - Silicon bulk calculation
+cat > "$RUN_DIR/si.scf.in" <<'EOF'
+&control
+    calculation = 'scf'
+    restart_mode = 'from_scratch'
+    prefix = 'silicon'
+    outdir = './tmp/'
+    pseudo_dir = './pseudo/'
+    verbosity = 'high'
+/
+&system
+    ibrav = 2
+    celldm(1) = 10.26
+    nat = 2
+    ntyp = 1
+    ecutwfc = 20.0
+    ecutrho = 80.0
+/
+&electrons
+    conv_thr = 1.0d-8
+    mixing_beta = 0.7
+    mixing_mode = 'plain'
+/
+ATOMIC_SPECIES
+ Si 28.086 Si.pz-vbc.UPF
+ATOMIC_POSITIONS (alat)
+ Si 0.00 0.00 0.00
+ Si 0.25 0.25 0.25
+K_POINTS automatic
+ 8 8 8 0 0 0
+EOF
+
+echo "=== Input file created ==="
+cat si.scf.in
+echo ""
+echo "=== Testing MPI connectivity ==="
+
+# Test MPI with hostname command
+$MPIRUN -np $NPROCS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by node \
+    hostname | sort | uniq -c
+
+echo ""
+echo "=== MPI connectivity test complete ==="
+echo ""
+
+# Calculate k-point pools
+# For 80 processes, we can use 2, 4, 5, 8, 10, 16, 20, or 40 pools
+# Using 4 pools (20 processes per pool) for good load balancing
+NPOOLS=4
+
+echo "=== Starting Quantum ESPRESSO SCF calculation ==="
+echo "MPI processes: $NPROCS"
+echo "K-point pools: $NPOOLS ($(($NPROCS / $NPOOLS)) processes per pool)"
+echo "Start time: $(date)"
+echo ""
+
+# Run Quantum ESPRESSO with proper MPI settings
+# Force pure MPI mode (no OpenMP threading)
+$MPIRUN -np $NPROCS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by ppr:40:node \
+    -x OMP_NUM_THREADS=1 \
+    -x PATH \
+    -x LD_LIBRARY_PATH \
+    $PWX -nk $NPOOLS -in si.scf.in > si.scf.out 2> si.scf.err
+
+QE_EXIT_CODE=$?
+
+echo ""
+echo "=== Quantum ESPRESSO completed ==="
+echo "Exit code: $QE_EXIT_CODE"
+echo "End time: $(date)"
+echo ""
+
+# Check results
+if [ $QE_EXIT_CODE -eq 0 ] && grep -q "JOB DONE" si.scf.out 2>/dev/null; then
+    echo "=========================================="
+    echo "         SUCCESS! JOB COMPLETED          "
+    echo "=========================================="
+    echo ""
+    echo "=== Final energy and timing ==="
+    grep -A 2 "!" si.scf.out | tail -3
+    echo ""
+    grep "PWSCF" si.scf.out | tail -1
+    echo ""
+    echo "=== Parallel efficiency ==="
+    grep "Parallel" si.scf.out | head -5
+    echo ""
+else
+    echo "=========================================="
+    echo "         JOB FAILED OR INCOMPLETE        "
+    echo "=========================================="
+    echo ""
+    if [ -s si.scf.err ]; then
+        echo "=== STDERR (first 30 lines) ==="
+        head -30 si.scf.err
+        echo ""
+    fi
+    if [ -s si.scf.out ]; then
+        echo "=== STDOUT (last 50 lines) ==="
+        tail -50 si.scf.out
+    else
+        echo "No output file generated"
+    fi
+fi
+
+echo ""
+echo "=== JOB END: $(date -u) ==="
+echo "=== Output files in: $RUN_DIR ==="
+echo "  - si.scf.in   (input)"
+echo "  - si.scf.out  (stdout)"
+echo "  - si.scf.err  (stderr)"
+echo "  - tmp/        (temporary files)"

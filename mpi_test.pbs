@@ -1,0 +1,37 @@
+#!/bin/bash
+#PBS -N mpi_test
+#PBS -l nodes=ac-2ee4-2-0:ppn=2+ac-2ee4-2-1:ppn=2
+#PBS -l walltime=00:05:00
+#PBS -j oe
+#PBS -o mpi_test.out
+
+cd $PBS_O_WORKDIR
+
+echo "=== MPI TEST START: $(date) ==="
+echo "NODES:"
+cat $PBS_NODEFILE
+echo ""
+echo "RANK COUNT: $(wc -l < $PBS_NODEFILE)"
+echo ""
+
+# Load Spack environment
+source /spack/share/spack/setup-env.sh
+spack load openmpi@5.0.3%gcc@11.4.0
+
+# Set OpenMPI environment variables
+export OMPI_MCA_btl="^openib"
+export OMPI_MCA_btl_tcp_if_include="eth0"
+export OMPI_MCA_plm_rsh_no_tree_spawn="1"
+export OMPI_MCA_plm_rsh_num_concurrent="50"
+
+# Test 1: Hostname test
+echo "=== TEST 1: Hostname test ==="
+mpiexec -np 4 --hostfile $PBS_NODEFILE hostname
+echo ""
+
+# Test 2: MPI Hello World
+echo "=== TEST 2: MPI rank test ==="
+mpiexec -np 4 --hostfile $PBS_NODEFILE bash -c 'echo "Rank $OMPI_COMM_WORLD_RANK on $(hostname)"'
+echo ""
+
+echo "=== MPI TEST END: $(date) ==="

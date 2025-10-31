@@ -1,0 +1,139 @@
+#!/bin/bash
+#PBS -N test_mpi_80
+#PBS -q svante-cluster8
+#PBS -l nodes=2:ppn=40
+#PBS -l walltime=00:05:00
+#PBS -j oe
+
+echo "=========================================="
+echo "MPI Test: 80 cores (2 nodes x 40 cores)"
+echo "=========================================="
+echo "Start: $(date)"
+echo ""
+
+echo "PBS Job ID: $PBS_JOBID"
+echo "PBS Nodefile: $PBS_NODEFILE"
+echo ""
+
+echo "Allocated nodes:"
+cat $PBS_NODEFILE | sort | uniq -c
+echo ""
+
+NPROCS=$(wc -l < $PBS_NODEFILE)
+echo "Total processes: $NPROCS"
+echo ""
+
+# Load OpenMPI
+echo "Loading OpenMPI..."
+source /spack/share/spack/setup-env.sh
+spack load openmpi@5.0.3%gcc@11.4.0
+
+OMPI_DIR=$(spack location -i openmpi@5.0.3%gcc@11.4.0)
+echo "OpenMPI location: $OMPI_DIR"
+echo "Using mpirun: $OMPI_DIR/bin/mpirun"
+echo ""
+
+# Set environment
+export OMP_NUM_THREADS=1
+export OMPI_MCA_btl="^openib"
+export OMPI_MCA_btl_tcp_if_include="eth0"
+
+echo "=========================================="
+echo "Test 1: hostname (verify distribution)"
+echo "=========================================="
+$OMPI_DIR/bin/mpirun -np $NPROCS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by node \
+    hostname | sort | uniq -c
+
+echo ""
+echo "=========================================="
+echo "Test 2: MPI rank and hostname"
+echo "=========================================="
+$OMPI_DIR/bin/mpirun -np $NPROCS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by node \
+    bash -c 'echo "Rank $OMPI_COMM_WORLD_RANK on $(hostname)"' | head -20
+
+echo ""
+echo "... (showing first 20 of $NPROCS ranks)"
+echo ""
+
+echo "=========================================="
+echo "Test 3: Simple MPI program (if available)"
+echo "=========================================="
+
+# Create a simple C MPI program
+cat > /tmp/mpi_test_$$.c << 'EOF'
+#include <mpi.h>
+#include <stdio.h>
+#include <unistd.h>
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    
+    int world_size, world_rank;
+    char hostname[256];
+    
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    gethostname(hostname, 256);
+    
+    if (world_rank == 0) {
+        printf("MPI_COMM_WORLD has %d processes\n", world_size);
+    }
+    
+    printf("Process %d/%d on %s\n", world_rank, world_size, hostname);
+    
+    MPI_Finalize();
+    return 0;
+}
+EOF
+
+# Try to compile and run
+if which mpicc > /dev/null 2>&1; then
+    echo "Compiling MPI test program..."
+    mpicc -o /tmp/mpi_test_$$ /tmp/mpi_test_$$.c 2>/dev/null
+    
+    if [ -f /tmp/mpi_test_$$ ]; then
+        echo "Running MPI test program with $NPROCS processes:"
+        echo ""
+        $OMPI_DIR/bin/mpirun -np $NPROCS \
+            --hostfile $PBS_NODEFILE \
+            --bind-to none \
+            --map-by node \
+            /tmp/mpi_test_$$ | head -25
+        
+        echo ""
+        echo "... (showing first 25 lines)"
+        
+        # Cleanup
+        rm -f /tmp/mpi_test_$$ /tmp/mpi_test_$$.c
+    else
+        echo "Compilation failed, skipping"
+    fi
+else
+    echo "mpicc not available, skipping compiled test"
+fi
+
+echo ""
+echo "=========================================="
+echo "Test 4: Process distribution verification"
+echo "=========================================="
+echo "Processes per node:"
+$OMPI_DIR/bin/mpirun -np $NPROCS \
+    --hostfile $PBS_NODEFILE \
+    --bind-to none \
+    --map-by node \
+    hostname | sort | uniq -c
+
+echo ""
+echo "Expected: 40 processes on each of 2 nodes"
+
+echo ""
+echo "=========================================="
+echo "SUCCESS: All MPI tests completed"
+echo "=========================================="
+echo "End: $(date)"

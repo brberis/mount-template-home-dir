@@ -1,0 +1,87 @@
+#!/bin/bash
+#PBS -N qe_simple
+#PBS -q svante-cluster8
+#PBS -l nodes=2:ppn=40
+#PBS -l walltime=00:10:00
+#PBS -j oe
+
+echo "=== JOB START: $(date) ==="
+echo "Nodefile: $PBS_NODEFILE"
+cat $PBS_NODEFILE | uniq -c
+echo ""
+
+# Load packages
+source /spack/share/spack/setup-env.sh
+spack load openmpi@5.0.3
+spack load quantum-espresso@7.3.1
+
+# Get binary location
+QE_DIR=$(spack location -i quantum-espresso@7.3.1)
+PWX="$QE_DIR/bin/pw.x"
+
+echo "Using: $PWX"
+echo ""
+
+# Set environment
+export OMP_NUM_THREADS=1
+
+# Prepare directory
+RUN_DIR="/mnt/nfs/svanteuser/qe_simple_test"
+mkdir -p "$RUN_DIR/pseudo"
+cd "$RUN_DIR"
+
+# Download pseudopotential
+if [ ! -f "pseudo/Si.pz-vbc.UPF" ]; then
+    wget -q -O pseudo/Si.pz-vbc.UPF \
+        https://pseudopotentials.quantum-espresso.org/upf_files/Si.pz-vbc.UPF
+fi
+
+# Create simple input
+cat > si.in << 'EOF'
+&control
+    calculation = 'scf'
+    prefix = 'si'
+    pseudo_dir = './pseudo/'
+/
+&system
+    ibrav = 2, celldm(1) = 10.26
+    nat = 2, ntyp = 1
+    ecutwfc = 18.0
+/
+&electrons
+/
+ATOMIC_SPECIES
+ Si 28.086 Si.pz-vbc.UPF
+ATOMIC_POSITIONS (alat)
+ Si 0.00 0.00 0.00
+ Si 0.25 0.25 0.25
+K_POINTS automatic
+ 4 4 4 0 0 0
+EOF
+
+echo "=== Testing with mpirun (80 processes) ==="
+mpirun -np 80 -hostfile $PBS_NODEFILE -x OMP_NUM_THREADS=1 $PWX -in si.in > si.out 2> si.err
+
+echo ""
+echo "Exit code: $?"
+echo ""
+
+# Check results
+if grep -q "JOB DONE" si.out 2>/dev/null; then
+    echo "=========================================="
+    echo "SUCCESS!"
+    echo "=========================================="
+    grep "!" si.out | head -3
+    grep "Parallel" si.out | head -3
+else
+    echo "FAILED"
+    echo ""
+    echo "=== First 30 lines of output ==="
+    head -30 si.out
+    echo ""
+    echo "=== Errors ==="
+    head -20 si.err
+fi
+
+echo ""
+echo "=== JOB END: $(date) ==="
