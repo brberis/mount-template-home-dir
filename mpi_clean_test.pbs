@@ -60,8 +60,12 @@ echo "=========================================="
 echo "Test 2: MPI Hello World Program"
 echo "=========================================="
 
+# Use shared NFS directory for compiled binaries
+SHARED_TMP="/mnt/nfs/tmp_mpi_$$"
+mkdir -p $SHARED_TMP
+
 # Create a simple MPI C program
-cat > /tmp/mpi_hello_$$.c << 'CEOF'
+cat > $SHARED_TMP/mpi_hello.c << 'CEOF'
 #include <mpi.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -113,9 +117,9 @@ CEOF
 
 # Compile the MPI program
 echo "Compiling MPI Hello World program..."
-mpicc -o /tmp/mpi_hello_$$ /tmp/mpi_hello_$$.c 2>&1
+mpicc -o $SHARED_TMP/mpi_hello $SHARED_TMP/mpi_hello.c 2>&1
 
-if [ -f /tmp/mpi_hello_$$ ]; then
+if [ -f $SHARED_TMP/mpi_hello ]; then
     echo "Compilation successful!"
     echo ""
     echo "Running MPI Hello World with $NPROCS processes:"
@@ -125,16 +129,12 @@ if [ -f /tmp/mpi_hello_$$ ]; then
         --hostfile $PBS_NODEFILE \
         --bind-to none \
         --map-by node \
-        /tmp/mpi_hello_$$
+        $SHARED_TMP/mpi_hello
     
     echo ""
-    
-    # Cleanup
-    rm -f /tmp/mpi_hello_$$ /tmp/mpi_hello_$$.c
 else
     echo "ERROR: Compilation failed"
-    cat /tmp/mpi_hello_$$.c
-    rm -f /tmp/mpi_hello_$$.c
+    cat $SHARED_TMP/mpi_hello.c
 fi
 
 echo ""
@@ -143,10 +143,11 @@ echo "Test 3: Node-to-node communication test"
 echo "=========================================="
 
 # Create MPI ping-pong test
-cat > /tmp/mpi_pingpong_$$.c << 'CEOF'
+cat > $SHARED_TMP/mpi_pingpong.c << 'CEOF'
 #include <mpi.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
@@ -190,9 +191,9 @@ int main(int argc, char** argv) {
 CEOF
 
 echo "Compiling MPI ping-pong test..."
-mpicc -o /tmp/mpi_pingpong_$$ /tmp/mpi_pingpong_$$.c 2>&1
+mpicc -o $SHARED_TMP/mpi_pingpong $SHARED_TMP/mpi_pingpong.c 2>&1
 
-if [ -f /tmp/mpi_pingpong_$$ ]; then
+if [ -f $SHARED_TMP/mpi_pingpong ]; then
     echo "Running ping-pong test:"
     echo ""
     
@@ -200,13 +201,11 @@ if [ -f /tmp/mpi_pingpong_$$ ]; then
         --hostfile $PBS_NODEFILE \
         --bind-to none \
         --map-by node \
-        /tmp/mpi_pingpong_$$
+        $SHARED_TMP/mpi_pingpong
     
-    # Cleanup
-    rm -f /tmp/mpi_pingpong_$$ /tmp/mpi_pingpong_$$.c
+    echo ""
 else
     echo "ERROR: Compilation failed"
-    rm -f /tmp/mpi_pingpong_$$.c
 fi
 
 echo ""
@@ -236,3 +235,6 @@ echo "- MPI communication: Working"
 echo "=========================================="
 echo ""
 echo "End: $(date)"
+
+# Cleanup shared temporary directory
+rm -rf $SHARED_TMP
