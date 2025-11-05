@@ -1,0 +1,270 @@
+#!/bin/bash
+#PBS -N mvapich2_multinode_test
+#PBS -l nodes=2:ppn=4
+#PBS -l walltime=00:10:00
+#PBS -j oe
+#PBS -o mvapich2_test.log
+
+#########################################################################
+# MVAPICH2 Multinode Test Job
+#
+# This PBS script tests MVAPICH2 across multiple nodes using:
+#   - Ring communication test
+#   - Collective operations (broadcast, reduce, gather)
+#   - Node distribution verification
+#
+# Customize the PBS directives above:
+#   -l nodes=X:ppn=Y  -> X nodes with Y processes per node
+#   -l walltime=HH:MM:SS -> Maximum runtime
+#
+# Submit with: qsub mvapich2_multinode_test.pbs
+# Check status: qstat
+# View output: cat mvapich2_test.log
+#########################################################################
+
+echo "========================================"
+echo "MVAPICH2 Multinode Test Job"
+echo "========================================"
+echo ""
+echo "Job ID: $PBS_JOBID"
+echo "Job Name: $PBS_JOBNAME"
+echo "Queue: $PBS_QUEUE"
+echo "Started at: $(date)"
+echo ""
+
+#########################################################################
+# Environment Setup
+#########################################################################
+
+echo "=== Environment Setup ==="
+echo ""
+
+# Load MVAPICH2 environment
+if [[ -f /etc/profile.d/mvapich2.sh ]]; then
+    source /etc/profile.d/mvapich2.sh
+    echo "✓ Loaded MVAPICH2 environment from /etc/profile.d/mvapich2.sh"
+elif [[ -d /opt/mvapich2 ]]; then
+    export PATH=/opt/mvapich2/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/mvapich2/lib:$LD_LIBRARY_PATH
+    export MPI_HOME=/opt/mvapich2
+    echo "✓ Loaded MVAPICH2 environment from /opt/mvapich2"
+else
+    echo "✗ ERROR: MVAPICH2 not found!"
+    echo "Please run setup_mvapich2_cluster.sh first"
+    exit 1
+fi
+
+# Verify MPI is available
+echo ""
+echo "MPI Installation:"
+which mpirun mpicc mpiexec 2>/dev/null || {
+    echo "✗ ERROR: MPI commands not found in PATH"
+    exit 1
+}
+
+echo ""
+echo "MVAPICH2 Version:"
+mpirun --version 2>&1 | head -3
+echo ""
+
+#########################################################################
+# PBS Job Information
+#########################################################################
+
+echo "=== PBS Job Information ==="
+echo ""
+echo "Number of nodes: $PBS_NUM_NODES"
+echo "Processes per node (ppn): $PBS_NUM_PPN"
+echo "Working directory: $PBS_O_WORKDIR"
+echo "Node file: $PBS_NODEFILE"
+echo ""
+
+# Display allocated nodes
+if [[ -f $PBS_NODEFILE ]]; then
+    echo "Allocated nodes:"
+    cat $PBS_NODEFILE | sort | uniq -c
+    echo ""
+    
+    NPROCS=$(wc -l < $PBS_NODEFILE)
+    echo "Total processes: $NPROCS"
+else
+    echo "✗ ERROR: PBS_NODEFILE not found!"
+    exit 1
+fi
+
+echo ""
+
+#########################################################################
+# Change to working directory
+#########################################################################
+
+cd $PBS_O_WORKDIR || {
+    echo "✗ ERROR: Cannot change to working directory: $PBS_O_WORKDIR"
+    exit 1
+}
+
+echo "Current directory: $(pwd)"
+echo ""
+
+#########################################################################
+# Compile MPI Test Program
+#########################################################################
+
+echo "=== Compiling MPI Test Program ==="
+echo ""
+
+# Check if source file exists
+if [[ ! -f mpi_ring_test.c ]]; then
+    echo "✗ ERROR: mpi_ring_test.c not found in $(pwd)"
+    echo "Please ensure the source file is in your working directory"
+    exit 1
+fi
+
+# Compile the test program
+echo "Compiling mpi_ring_test.c..."
+mpicc -o mpi_ring_test mpi_ring_test.c -O2 -Wall
+
+if [[ $? -eq 0 ]] && [[ -f mpi_ring_test ]]; then
+    echo "✓ Compilation successful"
+    ls -lh mpi_ring_test
+else
+    echo "✗ ERROR: Compilation failed"
+    exit 1
+fi
+
+echo ""
+
+#########################################################################
+# SSH Connectivity Test
+#########################################################################
+
+echo "=== Testing SSH Connectivity ==="
+echo ""
+
+# Test SSH to all nodes
+NODES=$(cat $PBS_NODEFILE | sort -u)
+SSH_ERRORS=0
+
+for node in $NODES; do
+    echo -n "Testing SSH to $node... "
+    if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 $node "echo OK" 2>/dev/null; then
+        echo "✓"
+    else
+        echo "✗ FAILED"
+        SSH_ERRORS=$((SSH_ERRORS + 1))
+    fi
+done
+
+echo ""
+
+if [[ $SSH_ERRORS -gt 0 ]]; then
+    echo "✗ WARNING: $SSH_ERRORS node(s) failed SSH test"
+    echo "This may cause MPI communication failures"
+    echo "Run setup_ssh_for_mpi.sh to fix SSH configuration"
+    echo ""
+fi
+
+#########################################################################
+# MVAPICH2 Environment Variables
+#########################################################################
+
+echo "=== MVAPICH2 Configuration ==="
+echo ""
+
+# Disable CPU affinity if having issues
+export MV2_ENABLE_AFFINITY=0
+
+# Use shared memory for intra-node communication
+export MV2_SMP_USE_CMA=0
+
+# Network interface selection (adjust if needed)
+# export MV2_DEFAULT_PORT=1  # For InfiniBand
+# export MV2_USE_RDMA_CM=1   # For InfiniBand
+
+# Debugging (comment out for production)
+export MV2_DEBUG_SHOW_BACKTRACE=1
+# export MV2_DEBUG_CORESIZE=unlimited
+
+echo "MVAPICH2 environment variables set"
+echo ""
+
+#########################################################################
+# Run MPI Test
+#########################################################################
+
+echo "========================================"
+echo "Running MVAPICH2 Multinode Test"
+echo "========================================"
+echo ""
+echo "Command: mpirun -np $NPROCS -hostfile $PBS_NODEFILE ./mpi_ring_test"
+echo ""
+echo "--- Test Output Start ---"
+echo ""
+
+# Run the MPI test
+mpirun -np $NPROCS -hostfile $PBS_NODEFILE ./mpi_ring_test
+
+MPI_EXIT_CODE=$?
+
+echo ""
+echo "--- Test Output End ---"
+echo ""
+
+#########################################################################
+# Additional Tests
+#########################################################################
+
+echo "=== Additional MPI Tests ==="
+echo ""
+
+# Test 1: Simple hostname test
+echo "Test 1: Hostname verification across nodes"
+echo "-------------------------------------------"
+mpirun -np $NPROCS -hostfile $PBS_NODEFILE hostname | sort | uniq -c
+echo ""
+
+# Test 2: Environment variables
+echo "Test 2: Environment variable propagation"
+echo "-----------------------------------------"
+export TEST_VAR="MPI_TEST_VALUE"
+mpirun -np 4 -hostfile $PBS_NODEFILE bash -c 'echo "Rank $(printenv OMPI_COMM_WORLD_RANK 2>/dev/null || printenv MV2_COMM_WORLD_RANK): TEST_VAR=$TEST_VAR on $(hostname)"' 2>/dev/null || echo "Environment test skipped"
+echo ""
+
+# Test 3: Process binding information (if supported)
+echo "Test 3: Process binding information"
+echo "------------------------------------"
+mpirun -np 4 -hostfile $PBS_NODEFILE cat /proc/self/status | grep -E "^(Name|Pid|Cpus_allowed_list)" 2>/dev/null | head -12 || echo "Binding info not available"
+echo ""
+
+#########################################################################
+# Results Summary
+#########################################################################
+
+echo "========================================"
+echo "Test Summary"
+echo "========================================"
+echo ""
+echo "Job ID: $PBS_JOBID"
+echo "Completed at: $(date)"
+echo "Total processes: $NPROCS"
+echo "Number of nodes: $(cat $PBS_NODEFILE | sort -u | wc -l)"
+echo ""
+
+if [[ $MPI_EXIT_CODE -eq 0 ]]; then
+    echo "✓ MPI Test Result: SUCCESS"
+    echo ""
+    echo "MVAPICH2 is working correctly across multiple nodes!"
+else
+    echo "✗ MPI Test Result: FAILED (exit code: $MPI_EXIT_CODE)"
+    echo ""
+    echo "Troubleshooting steps:"
+    echo "  1. Check SSH connectivity: run setup_ssh_for_mpi.sh"
+    echo "  2. Verify MVAPICH2 installation on all nodes"
+    echo "  3. Check firewall settings between nodes"
+    echo "  4. Review full log: cat mvapich2_test.log"
+fi
+
+echo ""
+echo "========================================"
+
+exit $MPI_EXIT_CODE
