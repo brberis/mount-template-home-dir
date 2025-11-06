@@ -40,20 +40,6 @@ if ! command -v sudo &> /dev/null; then
     exit 1
 fi
 
-# Check if user can run sudo (works in interactive sessions)
-# In non-interactive sessions, we'll let sudo prompt for password when needed
-if [ -t 0 ]; then
-    # Interactive terminal - verify sudo access
-    if ! sudo -v &> /dev/null; then
-        log_error "This script requires sudo privileges. Please ensure you can run sudo."
-        exit 1
-    fi
-    log_info "Running with sudo privileges..."
-else
-    # Non-interactive - sudo will prompt if needed
-    log_info "Running with sudo (will prompt for password if needed)..."
-fi
-
 log_section "E4S Container Shortcut Installation"
 
 # Configuration
