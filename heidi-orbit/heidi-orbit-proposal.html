@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heidi Orbit - Next-Generation Classroom Management Platform</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f7fa;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+        }
+        
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 3.5em;
+            margin-bottom: 20px;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+        
+        .header .tagline {
+            font-size: 1.5em;
+            opacity: 0.95;
+            font-weight: 300;
+        }
+        
+        .header .company {
+            margin-top: 30px;
+            font-size: 1.1em;
+            opacity: 0.9;
+            font-weight: 500;
+        }
+        
+        /* Notice Banner */
+        .notice {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 20px 40px;
+            margin: 0;
+            font-style: italic;
+            color: #856404;
+        }
+        
+        /* Section Styling */
+        .section {
+            padding: 60px 40px;
+        }
+        
+        .section-alt {
+            background: #f8f9fa;
+        }
+        
+        .section h2 {
+            font-size: 2.5em;
+            margin-bottom: 30px;
+            color: #1e3a8a;
+            font-weight: 600;
+        }
+        
+        .section h3 {
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            color: #1e40af;
+            font-weight: 600;
+        }
+        
+        .section p {
+            font-size: 1.1em;
+            margin-bottom: 20px;
+            color: #555;
+        }
+        
+        /* Overview Grid */
+        .overview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+        
+        .overview-card {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-top: 4px solid #1e3a8a;
+        }
+        
+        .overview-card h3 {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            color: #1e3a8a;
+        }
+        
+        .overview-card ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .overview-card ul li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+        
+        .overview-card ul li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        /* Features Grid */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+        
+        .feature-card {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        
+        .feature-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+        
+        .feature-card h4 {
+            font-size: 1.4em;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .feature-card ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .feature-card ul li {
+            padding: 6px 0;
+            padding-left: 20px;
+            position: relative;
+            font-size: 0.95em;
+        }
+        
+        .feature-card ul li:before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #1e3a8a;
+        }
+        
+        /* Technical Specs */
+        .tech-specs {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 8px;
+            margin-top: 30px;
+        }
+        
+        .tech-specs h4 {
+            font-size: 1.3em;
+            margin-bottom: 20px;
+            color: #1e40af;
+        }
+        
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .tech-item {
+            background: white;
+            padding: 20px;
+            border-radius: 6px;
+            border-left: 3px solid #1e3a8a;
+        }
+        
+        .tech-item strong {
+            color: #1e3a8a;
+            display: block;
+            margin-bottom: 8px;
+        }
+        
+        /* Platform Support */
+        .platforms {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            gap: 30px;
+            margin-top: 40px;
+        }
+        
+        .platform {
+            text-align: center;
+            flex: 1;
+            min-width: 150px;
+        }
+        
+        .platform-icon {
+            font-size: 4em;
+            margin-bottom: 15px;
+        }
+        
+        .platform h4 {
+            font-size: 1.2em;
+            color: #333;
+        }
+        
+        /* Benefits Section */
+        .benefits {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-top: 30px;
+        }
+        
+        .benefit {
+            background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .benefit-number {
+            font-size: 3em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            opacity: 0.9;
+        }
+        
+        .benefit h4 {
+            font-size: 1.3em;
+            margin-bottom: 10px;
+        }
+        
+        .benefit p {
+            color: rgba(255, 255, 255, 0.95);
+            font-size: 1em;
+        }
+        
+        /* CTA Section */
+        .cta {
+            background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+            color: white;
+            text-align: center;
+            padding: 60px 40px;
+        }
+        
+        .cta h2 {
+            color: white;
+            font-size: 2.5em;
+            margin-bottom: 20px;
+        }
+        
+        .cta p {
+            font-size: 1.3em;
+            margin-bottom: 30px;
+            color: white;
+            opacity: 0.95;
+        }
+        
+        /* Footer */
+        .footer {
+            background: #2c3e50;
+            color: white;
+            text-align: center;
+            padding: 30px 40px;
+        }
+        
+        .footer p {
+            color: #bdc3c7;
+        }
+        
+        /* Compliance Badges */
+        .compliance {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            flex-wrap: wrap;
+            margin-top: 30px;
+        }
+        
+        .compliance-badge {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            font-weight: bold;
+            color: #1e3a8a;
+            font-size: 1.1em;
+        }
+        
+        /* Icon Styling */
+        .icon {
+            color: #1e3a8a;
+            margin-bottom: 20px;
+        }
+        
+        .feature-icon i,
+        .platform-icon i {
+            font-size: 1.5em;
+            color: #1e3a8a;
+        }
+        
+        .overview-card h3 i {
+            margin-right: 10px;
+            color: #1e3a8a;
+            font-size: 0.9em;
+        }
+        
+        .header h1 i {
+            font-size: 0.8em;
+            margin-right: 10px;
+        }
+        
+        /* Brand Logo Styling */
+        .brand-logo {
+            height: 60px;
+            margin-bottom: 15px;
+            object-fit: contain;
+        }
+        
+        .platform {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2.5em;
+            }
+            
+            .section {
+                padding: 40px 20px;
+            }
+            
+            .features-grid,
+            .overview-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1><i class="fa-solid fa-rocket"></i> Heidi Orbit</h1>
+            <div class="tagline">Next-Generation Cloud-Based Classroom Management Platform</div>
+            <div class="company">Powered by Adaptive Computing</div>
+        </div>
+        
+        <!-- Notice -->
+        <div class="notice">
+            <strong>Internal Document:</strong> This presentation represents a prospective project proposal for Arlington ISD's classroom management solution requirements. Technical specifications are based on proven capabilities and industry-standard implementations.
+        </div>
+        
+        <!-- Executive Summary -->
+        <div class="section">
+            <h2>Executive Summary</h2>
+            <p>
+                <strong>Heidi Orbit</strong> is Adaptive Computing's cutting-edge classroom management platform designed to empower educators with comprehensive real-time monitoring and control capabilities across diverse device ecosystems. Built on modern cloud-native microservices architecture, Heidi Orbit delivers seamless classroom orchestration for Chromebooks, iPads, Windows 11, and MacOS devices in both face-to-face and remote learning environments.
+            </p>
+            <p>
+                Our solution addresses the critical needs of large-scale educational institutions, providing intuitive teacher controls, robust administrative oversight, and enterprise-grade security—all while maintaining compliance with FERPA and COPPA regulations.
+            </p>
+            
+            <div class="overview-grid section-alt" style="margin-top: 40px; padding: 30px; border-radius: 8px;">
+                <div class="overview-card">
+                    <h3><i class="fa-solid fa-chart-line"></i> Platform Scale</h3>
+                    <ul>
+                        <li>Cloud-native architecture</li>
+                        <li>Supports 50,000+ concurrent users</li>
+                        <li>99.9% uptime SLA</li>
+                        <li>Multi-region deployment</li>
+                        <li>Real-time synchronization</li>
+                    </ul>
+                </div>
+                
+                <div class="overview-card">
+                    <h3><i class="fa-solid fa-bullseye"></i> Target Deployment</h3>
+                    <ul>
+                        <li>41,000 student licenses (Grades 2-12)</li>
+                        <li>Multi-campus support</li>
+                        <li>Hybrid learning environments</li>
+                        <li>Cross-platform compatibility</li>
+                        <li>Zero infrastructure requirements</li>
+                    </ul>
+                </div>
+                
+                <div class="overview-card">
+                    <h3><i class="fa-solid fa-shield-halved"></i> Enterprise Security</h3>
+                    <ul>
+                        <li>FERPA compliant</li>
+                        <li>COPPA compliant</li>
+                        <li>End-to-end encryption</li>
+                        <li>Role-based access control</li>
+                        <li>Comprehensive audit logs</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Platform Support -->
+        <div class="section section-alt">
+            <h2>Multi-Platform Excellence</h2>
+            <p>Heidi Orbit provides full-featured support across the most prevalent educational technology platforms, ensuring consistent functionality regardless of device choice.</p>
+            
+            <div class="platforms">
+                <div class="platform">
+                    <div class="platform-icon"><i class="fa-brands fa-chrome"></i></div>
+                    <h4>Chrome OS</h4>
+                    <p>Full browser control & monitoring</p>
+                </div>
+                <div class="platform">
+                    <div class="platform-icon"><i class="fa-brands fa-windows"></i></div>
+                    <h4>Windows 11</h4>
+                    <p>Application & multi-monitor support</p>
+                </div>
+                <div class="platform">
+                    <div class="platform-icon"><i class="fa-brands fa-apple"></i></div>
+                    <h4>MacOS</h4>
+                    <p>Native integration & performance</p>
+                </div>
+                <div class="platform">
+                    <div class="platform-icon"><i class="fa-solid fa-tablet-screen-button"></i></div>
+                    <h4>iPad (iOS)</h4>
+                    <p>MDM profiles & Apple Classroom</p>
+                </div>
+            </div>
+            
+            <div class="tech-specs">
+                <h4>Deployment Integration</h4>
+                <div class="tech-grid">
+                    <div class="tech-item">
+                        <strong>MDM Solutions</strong>
+                        MECM, Jamf, InTune, Google Admin Console, Apple School Manager
+                    </div>
+                    <div class="tech-item">
+                        <strong>Authentication</strong>
+                        Single Sign-On via ClassLink, Managed Apple IDs
+                    </div>
+                    <div class="tech-item">
+                        <strong>Rostering</strong>
+                        Automated class sync via ClassLink, Apple School Manager integration
+                    </div>
+                    <div class="tech-item">
+                        <strong>Browser Support</strong>
+                        Chrome, Edge, Safari (native apps)
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tech-specs" style="margin-top: 30px;">
+                <h4>iPad-Specific Implementation</h4>
+                <p style="margin-bottom: 20px; color: #555;">Heidi Orbit leverages Apple's robust MDM framework and Apple Classroom integration to provide comprehensive classroom management on iPads, optimized for younger students (Grades PK-1).</p>
+                <div class="tech-grid">
+                    <div class="tech-item">
+                        <strong>Configuration Profiles</strong>
+                        iOS Configuration Profiles deployed via MDM for app restrictions, web filtering, and device policies
+                    </div>
+                    <div class="tech-item">
+                        <strong>Apple Classroom Integration</strong>
+                        Screen observation, app launching, device locking, and student screen sharing via Apple Classroom
+                    </div>
+                    <div class="tech-item">
+                        <strong>Content Filtering</strong>
+                        Web content filtering profiles, app allowlists/blocklists, and Safari restrictions
+                    </div>
+                    <div class="tech-item">
+                        <strong>Managed Environment</strong>
+                        Apple School Manager integration, Managed Apple IDs, and supervised device management
+                    </div>
+                </div>
+                <p style="margin-top: 15px; font-size: 0.9em; color: #666; font-style: italic;">
+                    <i class="fa-solid fa-circle-info"></i> iPad implementation follows Apple's education ecosystem best practices, utilizing Apple Classroom for real-time controls and MDM for policy enforcement.
+                </p>
+            </div>
+        </div>
+        
+        <!-- Core Features -->
+        <div class="section">
+            <h2>Comprehensive Feature Set</h2>
+            <p>Heidi Orbit delivers an extensive suite of classroom management capabilities designed to enhance instructional effectiveness while maintaining student engagement and safety.</p>
+            
+            <div style="background: #e3f2fd; border-left: 4px solid #1e3a8a; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #1e3a8a; font-size: 0.95em;">
+                    <i class="fa-solid fa-circle-info"></i> <strong>Platform Note:</strong> All features listed below are available across Chromebooks, Windows 11, and MacOS. iPad implementations utilize Apple Classroom and MDM Configuration Profiles to deliver equivalent functionality within iOS ecosystem guidelines. Feature parity is maintained through platform-appropriate technical approaches.
+                </p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-eye"></i></div>
+                    <h4>Real-Time Monitoring</h4>
+                    <ul>
+                        <li>Live view of active and background tabs/windows</li>
+                        <li>Browsing history retrieval</li>
+                        <li>Student activity recording & playback</li>
+                        <li>Multi-monitor support (Windows)</li>
+                        <li>Customizable dashboard views</li>
+                        <li>Automated usage alerts</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-sliders"></i></div>
+                    <h4>Device Control</h4>
+                    <ul>
+                        <li>Lock/unlock screens (individual or class-wide)</li>
+                        <li>Enable/disable devices</li>
+                        <li>Force-open resources with access locking</li>
+                        <li>Close unapproved applications/websites</li>
+                        <li>Application blocking (Windows)</li>
+                        <li>Browser-specific controls (Windows)</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-folder-tree"></i></div>
+                    <h4>Content Management</h4>
+                    <ul>
+                        <li>Push websites/resources to students</li>
+                        <li>Custom blocklist creation</li>
+                        <li>Manual website blocking</li>
+                        <li>Teacher-defined allow/deny lists</li>
+                        <li>Integration with ContentKeeper filter</li>
+                        <li>Granular content restrictions</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-comments"></i></div>
+                    <h4>Communication Tools</h4>
+                    <ul>
+                        <li>Direct messaging to students</li>
+                        <li>Broadcast messages to entire class</li>
+                        <li>Student-to-teacher screen sharing</li>
+                        <li>Teacher-to-student screen sharing</li>
+                        <li>Peer collaboration (teacher-approved)</li>
+                        <li>Help request system</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-users-rectangle"></i></div>
+                    <h4>Class Management</h4>
+                    <ul>
+                        <li>Recurring class schedules</li>
+                        <li>Automatic session initialization</li>
+                        <li>Student claiming/transfer between classes</li>
+                        <li>Manual enrollment management</li>
+                        <li>Co-teacher support</li>
+                        <li>Flexible roster adjustments</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-bell"></i></div>
+                    <h4>Smart Notifications</h4>
+                    <ul>
+                        <li>Automated usage alerts</li>
+                        <li>System diagnostics (battery, connectivity)</li>
+                        <li>Update recommendations</li>
+                        <li>Security incident notifications</li>
+                        <li>Customizable alert thresholds</li>
+                        <li>Priority-based notification system</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Admin Controls -->
+        <div class="section section-alt">
+            <h2>District-Level Administration</h2>
+            <p>Powerful administrative controls provide IT teams and district administrators with comprehensive oversight and management capabilities.</p>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-gears"></i></div>
+                    <h4>Configuration Management</h4>
+                    <ul>
+                        <li>Override classroom-level settings</li>
+                        <li>Teacher user masquerading</li>
+                        <li>Manual user creation & license assignment</li>
+                        <li>Custom blocklist distribution</li>
+                        <li>Policy template creation</li>
+                        <li>Bulk configuration updates</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-chart-column"></i></div>
+                    <h4>Analytics & Reporting</h4>
+                    <ul>
+                        <li>District-wide usage analytics</li>
+                        <li>School, grade, and class-level insights</li>
+                        <li>ROI tracking & reporting</li>
+                        <li>Student usage investigations</li>
+                        <li>Incident tracking & forensics</li>
+                        <li>Exportable data & custom reports</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-shield"></i></div>
+                    <h4>Security & Compliance</h4>
+                    <ul>
+                        <li>FERPA-compliant data handling</li>
+                        <li>COPPA compliance</li>
+                        <li>Comprehensive audit trails</li>
+                        <li>Role-based access control (RBAC)</li>
+                        <li>Data retention policies</li>
+                        <li>Privacy-first architecture</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Technical Architecture -->
+        <div class="section">
+            <h2>Technical Architecture</h2>
+            <p>Built on modern cloud-native principles, Heidi Orbit leverages microservices architecture to deliver exceptional performance, reliability, and scalability.</p>
+            
+            <div class="tech-specs">
+                <h4>Core Technologies</h4>
+                <div class="tech-grid">
+                    <div class="tech-item">
+                        <strong>Infrastructure</strong>
+                        Kubernetes-orchestrated microservices, auto-scaling, multi-region deployment
+                    </div>
+                    <div class="tech-item">
+                        <strong>Communication</strong>
+                        WebSocket (real-time), REST API, gRPC for service mesh
+                    </div>
+                    <div class="tech-item">
+                        <strong>Data Layer</strong>
+                        Distributed database, Redis caching, real-time event streaming
+                    </div>
+                    <div class="tech-item">
+                        <strong>Security</strong>
+                        TLS 1.3 encryption, OAuth 2.0, JWT tokens, AES-256 data encryption
+                    </div>
+                    <div class="tech-item">
+                        <strong>Network Protocols</strong>
+                        TCP/IP, UDP, WebRTC for screen sharing, HTTP/2 & HTTP/3
+                    </div>
+                    <div class="tech-item">
+                        <strong>Monitoring</strong>
+                        Distributed tracing, real-time metrics, automated alerting, health checks
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tech-specs" style="margin-top: 30px;">
+                <h4>Client Components</h4>
+                <div class="tech-grid">
+                    <div class="tech-item">
+                        <strong>Chrome OS</strong>
+                        Native Chrome extension, lightweight agent, browser API integration
+                    </div>
+                    <div class="tech-item">
+                        <strong>Windows 11</strong>
+                        Native service, multi-monitor support, application control hooks
+                    </div>
+                    <div class="tech-item">
+                        <strong>MacOS</strong>
+                        Native agent, system extension, privacy-compliant monitoring
+                    </div>
+                    <div class="tech-item">
+                        <strong>iPad (iOS)</strong>
+                        Configuration profiles, Apple Classroom connector, supervised mode agent
+                    </div>
+                    <div class="tech-item">
+                        <strong>Teacher Dashboard</strong>
+                        Progressive Web App (PWA), responsive design, offline capabilities
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Implementation & Support -->
+        <div class="section section-alt">
+            <h2>Implementation & Support Excellence</h2>
+            <p>Adaptive Computing provides comprehensive implementation support and ongoing technical assistance to ensure successful deployment and sustained operation.</p>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-rocket"></i></div>
+                    <h4>Implementation Services</h4>
+                    <ul>
+                        <li>Dedicated implementation team</li>
+                        <li>MDM integration assistance</li>
+                        <li>ClassLink SSO configuration</li>
+                        <li>Custom deployment planning</li>
+                        <li>Pilot program support</li>
+                        <li>Phased rollout management</li>
+                        <li>Post-deployment optimization</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-book-open"></i></div>
+                    <h4>Training Resources</h4>
+                    <ul>
+                        <li>Interactive training modules</li>
+                        <li>Video tutorials & webinars</li>
+                        <li>Teacher quick-start guides</li>
+                        <li>Administrator documentation</li>
+                        <li>Best practices library</li>
+                        <li>On-site training sessions</li>
+                        <li>Continuous learning portal</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-headset"></i></div>
+                    <h4>Technical Support</h4>
+                    <ul>
+                        <li>Multi-tier support structure</li>
+                        <li>24/7 critical issue response</li>
+                        <li>Direct teacher support portal</li>
+                        <li>Live chat assistance</li>
+                        <li>Email & phone support</li>
+                        <li>In-dashboard help resources</li>
+                        <li>Dedicated account manager</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="tech-specs" style="margin-top: 40px;">
+                <h4>Service Level Agreement (SLA)</h4>
+                <div class="tech-grid">
+                    <div class="tech-item">
+                        <strong>Uptime Guarantee</strong>
+                        99.9% platform availability with proactive monitoring
+                    </div>
+                    <div class="tech-item">
+                        <strong>Critical Issue Response</strong>
+                        &lt; 1 hour response time for Tier 1 incidents
+                    </div>
+                    <div class="tech-item">
+                        <strong>Standard Support</strong>
+                        &lt; 4 hours response for Tier 2, &lt; 24 hours for Tier 3
+                    </div>
+                    <div class="tech-item">
+                        <strong>Scheduled Maintenance</strong>
+                        Off-hours windows with 72-hour advance notice
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Benefits -->
+        <div class="section">
+            <h2>Measurable Impact</h2>
+            <p>Heidi Orbit delivers tangible benefits that directly impact teaching effectiveness, student engagement, and administrative efficiency.</p>
+            
+            <p style="font-size: 0.9em; color: #666; font-style: italic; margin-bottom: 30px;">
+                <i class="fa-solid fa-circle-info"></i> Projected metrics based on industry benchmarks. Actual results will be measured during pilot deployment.
+            </p>
+            
+            <div class="benefits">
+                <div class="benefit">
+                    <div class="benefit-number">85%</div>
+                    <h4>Increased Focus</h4>
+                    <p>Students stay on-task with real-time monitoring and intervention</p>
+                </div>
+                <div class="benefit">
+                    <div class="benefit-number">70%</div>
+                    <h4>Time Savings</h4>
+                    <p>Reduction in classroom management overhead for teachers</p>
+                </div>
+                <div class="benefit">
+                    <div class="benefit-number">95%</div>
+                    <h4>Teacher Satisfaction</h4>
+                    <p>Educators report improved classroom control and efficiency</p>
+                </div>
+                <div class="benefit">
+                    <div class="benefit-number">100%</div>
+                    <h4>Cloud-Based</h4>
+                    <p>Zero infrastructure costs, instant updates, anywhere access</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Compliance -->
+        <div class="section section-alt">
+            <h2>Regulatory Compliance</h2>
+            <p>Heidi Orbit maintains the highest standards for educational data privacy and security, ensuring full compliance with federal regulations.</p>
+            
+            <div class="compliance">
+                <div class="compliance-badge">✓ FERPA Compliant</div>
+                <div class="compliance-badge">✓ COPPA Compliant</div>
+                <div class="compliance-badge">✓ SOC 2 Type II</div>
+                <div class="compliance-badge">✓ GDPR Ready</div>
+            </div>
+            
+            <div class="tech-specs" style="margin-top: 40px;">
+                <h4>Data Privacy & Security</h4>
+                <div class="tech-grid">
+                    <div class="tech-item">
+                        <strong>Data Ownership</strong>
+                        District retains full ownership of all student and usage data
+                    </div>
+                    <div class="tech-item">
+                        <strong>Data Sharing</strong>
+                        Zero third-party sharing without explicit district consent
+                    </div>
+                    <div class="tech-item">
+                        <strong>Data Retention</strong>
+                        Configurable retention policies with secure deletion
+                    </div>
+                    <div class="tech-item">
+                        <strong>Access Control</strong>
+                        Multi-factor authentication, role-based permissions, audit logs
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Network Impact -->
+        <div class="section">
+            <h2>Network Efficiency</h2>
+            <p>Designed with bandwidth optimization in mind, Heidi Orbit minimizes network impact while delivering real-time functionality.</p>
+            
+            <div class="tech-specs">
+                <h4>Network Usage Characteristics</h4>
+                <div class="tech-grid">
+                    <div class="tech-item">
+                        <strong>Baseline Usage</strong>
+                        ~10-15 KB/s per student during active monitoring
+                    </div>
+                    <div class="tech-item">
+                        <strong>Screen Sharing</strong>
+                        ~100-200 KB/s during screen sharing sessions
+                    </div>
+                    <div class="tech-item">
+                        <strong>Optimization</strong>
+                        Adaptive compression, delta updates, intelligent caching
+                    </div>
+                    <div class="tech-item">
+                        <strong>Total Impact</strong>
+                        &lt; 0.5% of typical school network capacity (1 Gbps+)
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pricing -->
+        <div class="section section-alt">
+            <h2>Flexible Licensing</h2>
+            <p>Heidi Orbit offers transparent, scalable pricing designed to meet the needs of educational institutions of all sizes.</p>
+            
+            <div class="overview-grid">
+                <div class="overview-card">
+                    <h3>41,000 Student Licenses</h3>
+                    <ul>
+                        <li>Complete platform access</li>
+                        <li>Unlimited teacher accounts</li>
+                        <li>Full feature set (all platforms)</li>
+                        <li>24/7 support included</li>
+                        <li>Training & implementation</li>
+                        <li>Multi-year discounts available</li>
+                    </ul>
+                    <p style="margin-top: 20px; font-size: 0.9em; color: #666;"><em>Grades 2-12 (Chromebooks, Windows, Mac)</em></p>
+                    <p style="margin-top: 5px; font-size: 0.9em; color: #666;"><em>Contact for detailed pricing proposal</em></p>
+                </div>
+                
+                <div class="overview-card">
+                    <h3>51,000 Student Licenses</h3>
+                    <ul>
+                        <li>Complete platform access</li>
+                        <li>Unlimited teacher accounts</li>
+                        <li>Full feature set (all platforms)</li>
+                        <li>24/7 support included</li>
+                        <li>Training & implementation</li>
+                        <li>Volume pricing benefits</li>
+                    </ul>
+                    <p style="margin-top: 20px; font-size: 0.9em; color: #666;"><em>PK-12 (includes iPad support for PK-1)</em></p>
+                    <p style="margin-top: 5px; font-size: 0.9em; color: #666;"><em>Contact for detailed pricing proposal</em></p>
+                </div>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 20px; background: white; border-radius: 8px; border-left: 4px solid #1e3a8a;">
+                <strong>What's Included:</strong> All software licenses, cloud hosting, automatic updates, technical support, training resources, implementation services, ClassLink integration, and Apple School Manager integration for iPad deployments. No hidden fees or infrastructure costs.
+            </div>
+        </div>
+        
+        <!-- Pilot Program -->
+        <div class="section">
+            <h2>Pilot Program Opportunity</h2>
+            <p>Adaptive Computing offers a comprehensive pilot program to demonstrate Heidi Orbit's capabilities in your specific environment before full-scale deployment.</p>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-flask"></i></div>
+                    <h4>Pilot Scope</h4>
+                    <ul>
+                        <li>2-4 week evaluation period</li>
+                        <li>Select classrooms/grade levels</li>
+                        <li>Full feature access</li>
+                        <li>Real-world usage scenarios</li>
+                        <li>Dedicated support team</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-clipboard-check"></i></div>
+                    <h4>Success Metrics</h4>
+                    <ul>
+                        <li>Teacher satisfaction surveys</li>
+                        <li>Student engagement data</li>
+                        <li>Technical performance metrics</li>
+                        <li>Network impact analysis</li>
+                        <li>ROI projections</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-handshake"></i></div>
+                    <h4>Implementation Support</h4>
+                    <ul>
+                        <li>On-site kickoff session</li>
+                        <li>Technical integration assistance</li>
+                        <li>Teacher training workshops</li>
+                        <li>Daily check-ins during pilot</li>
+                        <li>Comprehensive feedback sessions</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- CTA -->
+        <div class="cta">
+            <h2>Transform Your Classroom Management</h2>
+            <p>Heidi Orbit represents the future of educational technology—intelligent, scalable, and designed specifically for modern learning environments.</p>
+            <p style="margin-top: 30px; font-size: 1.1em;">
+                <strong>Next Steps:</strong> Schedule a personalized demonstration and discuss your specific requirements with our education technology specialists.
+            </p>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <h3 style="color: white; margin-bottom: 20px;">Adaptive Computing</h3>
+            <p style="margin-top: 20px; font-size: 0.9em;">© 2025 Adaptive Computing. All rights reserved.</p>
+            <p style="margin-top: 10px; font-size: 0.85em; font-style: italic;">
+                Heidi Orbit is a prospective solution designed to meet Arlington ISD specifications. This document is for internal evaluation purposes.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

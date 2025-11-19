@@ -1,0 +1,53 @@
+<user-mapping>
+    <!-- Admin user -->
+    <authorize username="guacadmin" password="guacadmin">
+        <connection name="Desktop RDP">
+            <protocol>rdp</protocol>
+            <param name="hostname">localhost</param>
+            <param name="port">3389</param>
+            <param name="username">testuser</param>
+            <param name="password"></param>
+            <param name="security">any</param>
+            <param name="ignore-cert">true</param>
+            
+            <!-- Enable clipboard (bidirectional) -->
+            <param name="enable-clipboard">true</param>
+            
+            <!-- Enable audio -->
+            <param name="enable-audio">true</param>
+            <param name="audio-servername">localhost</param>
+            
+            <!-- Performance settings -->
+            <param name="color-depth">32</param>
+            <param name="resize-method">display-update</param>
+            <param name="enable-font-smoothing">true</param>
+            <param name="enable-wallpaper">false</param>
+        </connection>
+    </authorize>
+
+    <!-- testuser account -->
+    <authorize username="testuser" password="Aa123456!">
+        <connection name="Desktop RDP">
+            <protocol>rdp</protocol>
+            <param name="hostname">localhost</param>
+            <param name="port">3389</param>
+            <param name="username">testuser</param>
+            <param name="password"></param>
+            <param name="security">any</param>
+            <param name="ignore-cert">true</param>
+            
+            <!-- Enable clipboard (bidirectional) -->
+            <param name="enable-clipboard">true</param>
+            
+            <!-- Enable audio -->
+            <param name="enable-audio">true</param>
+            <param name="audio-servername">localhost</param>
+            
+            <!-- Performance settings -->
+            <param name="color-depth">32</param>
+            <param name="resize-method">display-update</param>
+            <param name="enable-font-smoothing">true</param>
+            <param name="enable-wallpaper">false</param>
+        </connection>
+    </authorize>
+</user-mapping>

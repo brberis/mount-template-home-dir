@@ -1,0 +1,13 @@
+<user-mapping>
+    <authorize username="guacadmin" password="guacadmin">
+        
+        <!-- Simple VNC Connection -->
+        <connection name="Desktop VNC">
+            <protocol>vnc</protocol>
+            <param name="hostname">127.0.0.1</param>
+            <param name="port">5901</param>
+            <param name="password">vncpass123</param>
+        </connection>
+
+    </authorize>
+</user-mapping>

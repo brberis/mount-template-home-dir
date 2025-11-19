@@ -1,0 +1,17 @@
+<user-mapping>
+    <authorize username="guacadmin" password="guacadmin">
+        
+        <!-- VNC Connection with Copy/Paste enabled -->
+        <connection name="Desktop VNC">
+            <protocol>vnc</protocol>
+            <param name="hostname">127.0.0.1</param>
+            <param name="port">5901</param>
+            <param name="password">vncpass123</param>
+            
+            <!-- Enable bidirectional clipboard -->
+            <param name="enable-clipboard">true</param>
+            <param name="clipboard-encoding">UTF-8</param>
+        </connection>
+
+    </authorize>
+</user-mapping>
